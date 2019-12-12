@@ -1,3 +1,8 @@
+default_tags = {
+  Application = "EksClusterTf"
+  Environment = "dev"
+}
+
 azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
 
 # http://www.davidc.net/sites/default/subnets/subnets.html?network=10.2.0.0&mask=16&division=25.f423720

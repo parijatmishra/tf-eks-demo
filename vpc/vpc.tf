@@ -22,9 +22,13 @@ variable "intra_subnets" {
   type = list(string)
 }
 
+variable "default_tags" {
+  type = map
+}
+
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
-  name   = "VpcEksTf"
+  name   = "VpcEksTf" # tag Name=...
 
   azs = var.azs
 
@@ -40,10 +44,7 @@ module "vpc" {
   enable_dns_support   = true
   enable_dns_hostnames = true
 
-  tags = {
-    Application = "EksClusterTf"
-    Environment = "dev"
-  }
+  tags = var.default_tags
 
   public_subnet_tags = {
     "kubernetes.io/role/elb" = "1"
@@ -52,6 +53,18 @@ module "vpc" {
   private_subnet_tags = {
     "kubernetes.io/role/internal-elb" = "1"
   }
+}
+
+resource "aws_default_route_table" "r" {
+  default_route_table_id = module.vpc.default_route_table_id
+
+  tags = merge({ "Name" = "VpcEksTf-default" }, var.default_tags)
+}
+
+resource "aws_default_security_group" "s" {
+  vpc_id = module.vpc.vpc_id
+
+  tags = merge({ "Name" = "VpcEksTf-default" }, var.default_tags)
 }
 
 output "vpc_id" {
