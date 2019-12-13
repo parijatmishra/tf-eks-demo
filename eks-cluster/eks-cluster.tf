@@ -422,9 +422,6 @@ resource "aws_launch_template" "EksNodeGroup" {
 
   user_data = base64encode(local.user_data)
 
-  lifecycle {
-    create_before_destroy = true
-  }
   monitoring {
     enabled = true
   }
