@@ -30,8 +30,8 @@ variable "vpc_private_subnet_ids" {
 # IAM
 ####################
 
-resource "aws_iam_role" "EksServiceRole" {
-  name        = "${var.cluster-name}-ServiceRole"
+resource "aws_iam_role" "EksControlPlane" {
+  name        = "${var.cluster-name}-ControlPlane"
   description = "Allow Amazon EKS Control Plane access to our account resources"
 
   assume_role_policy = <<EOF
@@ -50,23 +50,23 @@ resource "aws_iam_role" "EksServiceRole" {
 EOF
 
   tags = merge({
-    "Name" = "${var.cluster-name}ServiceRole"
+    "Name" = "${var.cluster-name}-ControlPlane"
   }, var.default_tags)
 }
 
-resource "aws_iam_role_policy_attachment" "EksServiceRole-AmazonEKSClusterPolicy" {
+resource "aws_iam_role_policy_attachment" "EksControlPlane-AmazonEKSClusterPolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = "${aws_iam_role.EksServiceRole.name}"
+  role       = "${aws_iam_role.EksControlPlane.name}"
 }
 
-resource "aws_iam_role_policy_attachment" "EksServiceRole-AmazonEKSServicePolicy" {
+resource "aws_iam_role_policy_attachment" "EksControlPlane-AmazonEKSServicePolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
-  role       = "${aws_iam_role.EksServiceRole.name}"
+  role       = "${aws_iam_role.EksControlPlane.name}"
 }
 
 resource "aws_iam_role_policy" "EksCloudWatchMetricsPolicy" {
   name = "EksCloudWatchMetricsPolicy"
-  role = "${aws_iam_role.EksServiceRole.name}"
+  role = "${aws_iam_role.EksControlPlane.name}"
 
   policy = <<EOF
 {
@@ -97,7 +97,7 @@ EOF
 ####################
 
 resource "aws_security_group" "EksControlPlane" {
-  name        = "${var.cluster-name}ControlPlane"
+  name        = "${var.cluster-name}-ControlPlane"
   description = "Security Group for the EKS Masters"
 
   vpc_id = var.vpc_id
@@ -118,7 +118,7 @@ resource "aws_security_group" "EksControlPlane" {
 # Log Group
 ####################
 
-resource "aws_cloudwatch_log_group" "EksCluster" {
+resource "aws_cloudwatch_log_group" "EksControlPlane" {
   name              = "/aws/eks/${var.cluster-name}/cluster"
   retention_in_days = 30
 }
@@ -127,11 +127,11 @@ resource "aws_cloudwatch_log_group" "EksCluster" {
 # Cluster aka Control Plane
 ####################
 
-resource "aws_eks_cluster" "EksCluster" {
+resource "aws_eks_cluster" "EksControlPlane" {
   name = var.cluster-name
 
   version  = 1.14
-  role_arn = aws_iam_role.EksServiceRole.arn
+  role_arn = aws_iam_role.EksControlPlane.arn
   enabled_cluster_log_types = [
     "api",
     "audit",
@@ -149,9 +149,9 @@ resource "aws_eks_cluster" "EksCluster" {
 
 
   depends_on = [
-    "aws_cloudwatch_log_group.EksCluster",
-    "aws_iam_role_policy_attachment.EksServiceRole-AmazonEKSClusterPolicy",
-    "aws_iam_role_policy_attachment.EksServiceRole-AmazonEKSServicePolicy",
+    "aws_cloudwatch_log_group.EksControlPlane",
+    "aws_iam_role_policy_attachment.EksControlPlane-AmazonEKSClusterPolicy",
+    "aws_iam_role_policy_attachment.EksControlPlane-AmazonEKSServicePolicy",
     "aws_iam_role_policy.EksCloudWatchMetricsPolicy"
   ]
 
@@ -168,8 +168,8 @@ resource "aws_eks_cluster" "EksCluster" {
 # IAM
 ####################
 
-resource "aws_iam_role" "EksNodeGroupRole" {
-  name        = "${var.cluster-name}-NodeGroupRole"
+resource "aws_iam_role" "EksNodeGroup" {
+  name        = "${var.cluster-name}-NodeGroup"
   description = "Allow EKS agent on worker nodes to call some AWS APIs"
 
   assume_role_policy = <<EOF
@@ -188,7 +188,7 @@ resource "aws_iam_role" "EksNodeGroupRole" {
 EOF
 
   tags = merge({
-    "Name" = "${var.cluster-name}NodeGroupRole"
+    "Name" = "${var.cluster-name}-NodeGroup"
   }, var.default_tags)
 
 }
@@ -199,27 +199,27 @@ EOF
 #
 resource "aws_iam_instance_profile" "EksNodeGroupInstanceProfile" {
   name = "${var.cluster-name}-NodeGroup"
-  role = "${aws_iam_role.EksNodeGroupRole.name}"
+  role = "${aws_iam_role.EksNodeGroup.name}"
 }
 
-resource "aws_iam_role_policy_attachment" "EksNodeGroupRole-AmazonEKSWorkerNodePolicy" {
+resource "aws_iam_role_policy_attachment" "EksNodeGroup-AmazonEKSWorkerNodePolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-  role       = "${aws_iam_role.EksNodeGroupRole.name}"
+  role       = "${aws_iam_role.EksNodeGroup.name}"
 }
 
-resource "aws_iam_role_policy_attachment" "EksNodeGroupRole-AmazonEC2ContainerRegistryReadOnly" {
+resource "aws_iam_role_policy_attachment" "EksNodeGroup-AmazonEC2ContainerRegistryReadOnly" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-  role       = "${aws_iam_role.EksNodeGroupRole.name}"
+  role       = "${aws_iam_role.EksNodeGroup.name}"
 }
 
-resource "aws_iam_role_policy_attachment" "EksNodeGroupRole-AmazonEKS_CNI_Policy" {
+resource "aws_iam_role_policy_attachment" "EksNodeGroup-AmazonEKS_CNI_Policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-  role       = "${aws_iam_role.EksNodeGroupRole.name}"
+  role       = "${aws_iam_role.EksNodeGroup.name}"
 }
 
-resource "aws_iam_role_policy" "EksNodeGroupRole-EbsCsiDriverPolicy" {
+resource "aws_iam_role_policy" "EksNodeGroup-EbsCsiDriverPolicy" {
   name = "${var.cluster-name}-NodeGroup-EbsCsiDriverPolicy"
-  role = "${aws_iam_role.EksNodeGroupRole.name}"
+  role = "${aws_iam_role.EksNodeGroup.name}"
 
   policy = <<EOF
 {
@@ -245,9 +245,9 @@ resource "aws_iam_role_policy" "EksNodeGroupRole-EbsCsiDriverPolicy" {
 EOF
 }
 
-resource "aws_iam_role_policy" "EksNodeGroupRole-ALBIngressControllerPolicy" {
+resource "aws_iam_role_policy" "EksNodeGroup-ALBIngressControllerPolicy" {
   name = "${var.cluster-name}-NodeGroup-ALBIngressControllerPolicy"
-  role = "${aws_iam_role.EksNodeGroupRole.name}"
+  role = "${aws_iam_role.EksNodeGroup.name}"
 
   policy = <<EOF
 {
@@ -287,9 +287,9 @@ resource "aws_iam_role_policy" "EksNodeGroupRole-ALBIngressControllerPolicy" {
 EOF
 }
 
-resource "aws_iam_role_policy" "EksNodeGroupRole-ClusterAutoScalerPolicy" {
+resource "aws_iam_role_policy" "EksNodeGroup-ClusterAutoScalerPolicy" {
   name = "${var.cluster-name}-NodeGroup-ClusterAutoScalerPolicy"
-  role = "${aws_iam_role.EksNodeGroupRole.name}"
+  role = "${aws_iam_role.EksNodeGroup.name}"
 
   policy = <<EOF
 {
@@ -318,7 +318,7 @@ EOF
 ####################
 
 resource "aws_security_group" "EksNodeGroup" {
-  name        = "${var.cluster-name}NodeGroup"
+  name        = "${var.cluster-name}-NodeGroup"
   description = "Security Group for all EKS Worker Nodes"
 
   vpc_id = var.vpc_id
@@ -375,7 +375,7 @@ resource "aws_security_group_rule" "EksControlPlane-Ingress-NodeGroups" {
 ####################
 
 # Recommended EKS optimized AMI ID
-data "aws_ssm_parameter" "eks_ami_id" {
+data "aws_ssm_parameter" "EksNodeGroupAmiId" {
   name = "/aws/service/eks/optimized-ami/1.14/amazon-linux-2/recommended/image_id"
 }
 
@@ -404,14 +404,14 @@ EOF
 # Launch Template
 ####################
 
-resource "aws_launch_template" "launch_template" {
+resource "aws_launch_template" "EksNodeGroup" {
   name = "${var.cluster-name}"
 
   iam_instance_profile {
     name = "${aws_iam_instance_profile.EksNodeGroupInstanceProfile.name}"
   }
 
-  image_id               = data.aws_ssm_parameter.eks_ami_id
+  image_id               = data.aws_ssm_parameter.EksNodeGroupAmiId
   instance_type          = "t3a.medium"
   key_name               = var.ssh_keypair_name
   vpc_security_group_ids = ["${aws_security_group.EksNodeGroup.id}"]
