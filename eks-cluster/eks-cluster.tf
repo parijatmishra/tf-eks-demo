@@ -10,7 +10,7 @@ variable "cluster-name" {
   type = string
 }
 
-variable "keypair" {
+variable "ssh_keypair_name" {
   type = string
 }
 
@@ -18,8 +18,20 @@ variable "vpc_id" {
   type = string
 }
 
+variable "vpc_private_subnet_ids" {
+  type = list(string)
+}
+
+########################################################################
+# EKS Control Plane or "Cluster" - the master nodes
+########################################################################
+
+####################
+# IAM
+####################
+
 resource "aws_iam_role" "EksServiceRole" {
-  name        = "${var.cluster-name}ServiceRole"
+  name        = "${var.cluster-name}-ServiceRole"
   description = "Allow Amazon EKS Control Plane access to our account resources"
 
   assume_role_policy = <<EOF
@@ -80,8 +92,84 @@ resource "aws_iam_role_policy" "EksCloudWatchMetricsPolicy" {
 EOF
 }
 
+####################
+# Security Group
+####################
+
+resource "aws_security_group" "EksControlPlane" {
+  name        = "${var.cluster-name}ControlPlane"
+  description = "Security Group for the EKS Masters"
+
+  vpc_id = var.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = -1
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge({
+    "Name" = "${var.cluster-name}ControlPlane"
+  }, var.default_tags)
+}
+
+####################
+# Log Group
+####################
+
+resource "aws_cloudwatch_log_group" "EksCluster" {
+  name              = "/aws/eks/${var.cluster-name}/cluster"
+  retention_in_days = 30
+}
+
+####################
+# Cluster aka Control Plane
+####################
+
+resource "aws_eks_cluster" "EksCluster" {
+  name = var.cluster-name
+
+  version  = 1.14
+  role_arn = aws_iam_role.EksServiceRole.arn
+  enabled_cluster_log_types = [
+    "api",
+    "audit",
+    "authenticator",
+    # "controllermanager",
+    # "scheduler"
+  ]
+
+  vpc_config {
+    endpoint_private_access = true
+    endpoint_public_access  = true
+    security_group_ids      = [aws_security_group.EksControlPlane.id]
+    subnet_ids              = var.vpc_private_subnet_ids
+  }
+
+
+  depends_on = [
+    "aws_cloudwatch_log_group.EksCluster",
+    "aws_iam_role_policy_attachment.EksServiceRole-AmazonEKSClusterPolicy",
+    "aws_iam_role_policy_attachment.EksServiceRole-AmazonEKSServicePolicy",
+    "aws_iam_role_policy.EksCloudWatchMetricsPolicy"
+  ]
+
+  tags = merge({
+    "Name" = var.cluster-name
+  }, var.default_tags)
+}
+
+########################################################################
+# EKS Unmanaged Node Groups
+########################################################################
+
+####################
+# IAM
+####################
+
 resource "aws_iam_role" "EksNodeGroupRole" {
-  name        = "${var.cluster-name}NodeGroupRole"
+  name        = "${var.cluster-name}-NodeGroupRole"
   description = "Allow EKS agent on worker nodes to call some AWS APIs"
 
   assume_role_policy = <<EOF
@@ -103,6 +191,15 @@ EOF
     "Name" = "${var.cluster-name}NodeGroupRole"
   }, var.default_tags)
 
+}
+
+#
+# An IAM Instance Profile - needed for unmanaged Node Groups where we create
+# our own EC2 instances
+#
+resource "aws_iam_instance_profile" "EksNodeGroupInstanceProfile" {
+  name = "${var.cluster-name}-NodeGroup"
+  role = "${aws_iam_role.EksNodeGroupRole.name}"
 }
 
 resource "aws_iam_role_policy_attachment" "EksNodeGroupRole-AmazonEKSWorkerNodePolicy" {
@@ -216,23 +313,9 @@ resource "aws_iam_role_policy" "EksNodeGroupRole-ClusterAutoScalerPolicy" {
 EOF
 }
 
-resource "aws_security_group" "EksControlPlane" {
-  name        = "${var.cluster-name}ControlPlane"
-  description = "Security Group for the EKS Masters"
-
-  vpc_id = var.vpc_id
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = -1
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge({
-    "Name" = "${var.cluster-name}ControlPlane"
-  }, var.default_tags)
-}
+####################
+# Security Group
+####################
 
 resource "aws_security_group" "EksNodeGroup" {
   name        = "${var.cluster-name}NodeGroup"
@@ -273,6 +356,9 @@ resource "aws_security_group_rule" "EksNodeGroup-Ingress-ControlPlane" {
   source_security_group_id = aws_security_group.EksControlPlane.id
 }
 
+#
+# Update the Control Plane Security Group - add node security group to it
+#
 resource "aws_security_group_rule" "EksControlPlane-Ingress-NodeGroups" {
   description              = "Allow Control Plane to receive communication from pods and kubelets"
   type                     = "ingress"
@@ -282,3 +368,68 @@ resource "aws_security_group_rule" "EksControlPlane-Ingress-NodeGroups" {
   security_group_id        = aws_security_group.EksControlPlane.id
   source_security_group_id = aws_security_group.EksNodeGroup.id
 }
+
+
+####################
+# AMI
+####################
+
+# Recommended EKS optimized AMI ID
+data "aws_ssm_parameter" "eks_ami_id" {
+  name = "/aws/service/eks/optimized-ami/1.14/amazon-linux-2/recommended/image_id"
+}
+
+data "aws_region" "current" {}
+
+####################
+# User Data
+####################
+
+# User data to pass to the EC2 Instance. Calls built in EKS bootstrap.sh script
+# See: https://github.com/awslabs/amazon-eks-ami/blob/master/files/bootstrap.sh for the script source
+# See: https://learn.hashicorp.com/terraform/aws/eks-intro#
+# https://learn.hashicorp.com/terraform/aws/eks-intro#worker-node-autoscaling-group
+# See: https://amazon-eks.s3-us-west-2.amazonaws.com/cloudformation/2019-11-15/amazon-eks-nodegroup.yaml
+#      Resources -> NodeLaunchConfig -> Properties -> UserData
+#   for an example of how to call it.
+locals {
+  userdata = <<EOF
+#!/bin/bash
+set -o xtrace
+/etc/eks/bootstrap.sh '${var.cluster-name}'
+EOF
+}
+
+####################
+# Launch Template
+####################
+
+resource "aws_launch_template" "launch_template" {
+  name = "${var.cluster-name}"
+
+  iam_instance_profile {
+    name = "${aws_iam_instance_profile.EksNodeGroupInstanceProfile.name}"
+  }
+
+  image_id               = data.aws_ssm_parameter.eks_ami_id
+  instance_type          = "t3a.medium"
+  key_name               = var.ssh_keypair_name
+  vpc_security_group_ids = ["${aws_security_group.EksNodeGroup.id}"]
+
+  network_interfaces {
+    associate_public_ip_address = false
+  }
+
+  user_data = base64encode(local.user_data)
+
+  lifecycle {
+    create_before_destroy = true
+  }
+  monitoring {
+    enabled = true
+  }
+}
+
+####################
+# Auto Scaling Groups
+####################
