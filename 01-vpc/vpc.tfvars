@@ -1,6 +1,7 @@
 default_tags = {
-  Application = "EksClusterTf"
-  Environment = "dev"
+  Application                          = "EksClusterTf"
+  Environment                          = "dev"
+  "kubernetes.io/cluster/EksClusterTf" = "shared"
 }
 
 azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
