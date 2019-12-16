@@ -1,9 +1,27 @@
+cluster_name = "EksClusterTf"
+
 default_tags = {
   Application = "EksClusterTf"
   Environment = "dev"
 }
 
-cluster_name = "EksClusterTf"
+default_tags_asg = [
+  {
+    key                 = "Application"
+    value               = "EksClusterTf"
+    propagate_at_launch = true
+  },
+  {
+    key                 = "Environment"
+    value               = "dev"
+    propagate_at_launch = true
+  },
+  {
+    key                 = "kubernetes.io/cluster/EksClusterTf"
+    value               = 1
+    propagate_at_launch = true
+  }
+]
 
 vpc_id = "vpc-00f201ec4c27127a6"
 
@@ -14,6 +32,8 @@ vpc_private_subnet_ids = [
 ]
 
 ssh_keypair_name = "general1"
+
+cluster_security_group_id = "sg-0f894f76d939e967a"
 
 cluster_endpoint = "https://97D97F3861F66C0ABEA7089F9FC3B1FD.sk1.us-east-1.eks.amazonaws.com"
 

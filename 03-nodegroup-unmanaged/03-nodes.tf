@@ -41,7 +41,7 @@ resource "aws_launch_template" "EksNodeGroup-standard" {
     name = aws_iam_instance_profile.EksNodeGroupInstanceProfile.name
   }
 
-  image_id               = data.aws_ssm_parameter.EksNodeGroupAmiId
+  image_id               = data.aws_ssm_parameter.EksNodeGroupAmiId.value
   instance_type          = "t3a.medium"
   key_name               = var.ssh_keypair_name
   vpc_security_group_ids = [aws_security_group.EksNodeGroup.id]
@@ -59,7 +59,7 @@ resource "aws_launch_template" "EksNodeGroup-standard" {
   tag_specifications {
     resource_type = "instance"
     tags = merge({
-      "Name" = "${var.cluster_name}-NodeGroup-standard"
+      "Name" = "${var.cluster_name}-NodeGroup-standard",
     }, var.default_tags)
   }
 
@@ -90,9 +90,10 @@ resource "aws_autoscaling_group" "EksNodeGroup" {
     version = "$Latest"
   }
 
-  default_cooldown    = 60
-  health_check_type   = "EC2" # default
-  vpc_zone_identifier = [var.vpc_private_subnet_ids[count.index]]
+  default_cooldown          = 60
+  health_check_type         = "EC2" # default
+  health_check_grace_period = 0
+  vpc_zone_identifier       = [var.vpc_private_subnet_ids[count.index]]
 
   # See: https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-instance-monitoring.html
   enabled_metrics = [
@@ -105,4 +106,6 @@ resource "aws_autoscaling_group" "EksNodeGroup" {
     "GroupTerminatingInstances",
     "GroupTotalInstances"
   ]
+
+  tags = var.default_tags_asg
 }

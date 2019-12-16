@@ -82,6 +82,7 @@ default_tags = {
 
 Now we can build out VPC:
 
+    terraform init # if not done previously in this module
     terraform apply --var-file vpc.tfvars
 
 **Important**: For every new EKS cluster that will share this VPC, we will have to update the tags above.
@@ -120,7 +121,8 @@ The `variables.tfvars` file should look something like this:
 
 Now run terraform to build the EKS cluster:
 
-    terraform apply --var-file variables.tfvars
+    $ terraform init # if not done previously in this module
+    $ terraform apply --var-file variables.tfvars
 
 Once the cluster is built, generate a kubeconfig for use with `kubectl` command line too, and/or the terraform `kubernetes` provider:
 
@@ -132,11 +134,21 @@ Set the environment variable `KUBECONFIG` to point to this file, so that subsequ
 
     export KUBECONFIG=~/.kube/EksClusterTf
 
+To verify that you can access the cluster usnig kubectl, you can try:
+
+    $ kubectl get svc
+    NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+    kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   28h
+
 ## Node Group
 
-We will create an "unmanaged" node group - that is, a node group whose instances are created by an auto-scaling group we define.
+Before running the commands below, ensure `kubectl` is in the `PATH`, and `KUBECONFIG` is set and pointing to the right kubeconfig. (If you are using a single kubeconfig, ensure the `current-context` is pointing to the right context.)
 
-*Note* there are two other ways of creating node groups - "Managed node groups" via the AWS EKS API, and a "Fargate profile", also via the EKS API. We will cover them later.
+### Node Group worker nodes
+
+We will create an "unmanaged" node group - that is, a node group whose instances are created by an auto-scaling group we define.  In fact, we will create three auto-scaling groups, one for each AZ.  This is because we will be using a Kubernetes controller named "Cluster Autoscaler" later, and that does not work well with ASGs that span multiple AZs.  This situation may change in future if Cluster Autoscaler is enhanced to work with multi-AZ ASGs.
+
+*Note* there are two other ways of creating node groups - "Managed node groups" via the AWS EKS API, and a "Fargate profile", also via the EKS API. We do not cover them here.
 
 Go into the directory:
 
@@ -173,10 +185,71 @@ vpc_private_subnet_ids = [
 
 ssh_keypair_name = "general1"
 
-cluster_endpoint = "https://97D97F3861F66C0ABEA7089F9FC3B1FD.sk1.us-east-1.eks.amazonaws.com"
+cluster_security_group_id = "sg-0f894f76d939e967a"
+
+cluster_endpoint = "https://....eks.amazonaws.com"
 
 cluster_certificate_authority_data = "LS0tLS1C..."
 ```
+
+**Note: you will quickly (in a few mins) need to execute the instructions in the next paragraph as well, otherwise the nodegroup creation will fail.**
+
+To create the cluster, run:
+
+    $ terraform init # if not done previously in this module
+    $ terraform apply -var-file=variables.tfvars
+
+Note the output `nodegroup_iam_role_arn`.  We will need it quickly.
+
+In the top directory, edit the file `kubernetes-config-map.sh`.  Replace the text `$NODEGROUP_IAM_ROLE_ARN` with the value of the `nodegroup_iam_role_arn` captured above.  Uncomment the first `- rolearn` stanza under `mapRoles`, so it looks something like this:
+
+```
+  mapRoles: |
+      - rolearn: <ARN you captured above>
+        username: system:node:{{EC2PrivateDNSName}}
+        groups:
+          - system:bootstrappers
+          - system:nodes
+#     - rolearn: $ADMINISTRATOR_ROLE_ARN
+...
+```
+
+Now, run:
+
+    $ sh kubernetes-config-map.sh
+
+The EC2 instances will register as Kubernetes nodes in a few minutes.  To check their status, run:
+
+    $ kubectl get nodes
+
+This should give you a list of nodes.
+
+**What did we just do?**
+
+We created a node group above, by creating an Auto-Scaling Group that will launch EC2 instances from an AWS provided, EKS optimized AMI.  In the user-data of the instance, we will invoke a built-in "bootstrap script", giving it our cluster name as an argument. The bootstrap script will discover the endpoint of the cluster with the specified name, by calling the AWS EKS APIs. Then it will call the K8S APIs to register the node. To be able to do this, the code running in the EC2 instance:
+
+1. Needs to have the credentials to call AWS EKS APIs
+2. Needs to have credentials to call K8S APIs - note that K8S uses its own RBAC system
+
+For (1) we will create an IAM role and an EC2 instance profile that uses that role.  The role will have permissions to call various AWS APIs.
+
+For (2) we can use the same IAM role, but we have to tell Kubernetes about it.  On AWS EKS, the K8S API server can *authenticate* credentials with AWS IAM.  We have to provide the IAM role information to K8S in a `ConfigMap` named `aws-auth`.
+
+In the file `kubernetes-config-map.sh`, we run two commands:
+
+- the `cat <<EOF > aws-auth-cm.yml` command uses a bash HEREDOC syntax to create a file named `aws-auth-cm.yml`, with its contents being a Kubernetes `ConfigMap` named `aws-auth`.  In the steps above, we uncommented a `mapRoles` field and a role, and specified the ARN of our node's IAM role in the `rolearn` field.
+- the `kubectl apply ...` command then posts the config map to our K8S cluster.
+
+We had to run this command after starting out cluster creation because we don't have the IAM role beforehand.  When we ran the previous `terraform apply` command, because terraform will create an auto-scaling group, which will then create EC2 instances, which will run a bootstrap script, which starts calling the cluster's K8S APIs using our IAM role's credentials. If the K8S API call fails, the bootstrap script will retry a few times. This takes a few minutes, and that is the time we have to register the newly generated IAM role with K8S via a config map.
+
+We could have broken the node group generation step in two phases:
+
+- generate the IAM role and then register it with K8S using the config map
+- launch the node group, secure in the knowledge that our IAM role is already registered and the bootstrap script will succeed the first time.
+
+**Troubleshooting**
+
+If after several minutes, you still don't see any nodes, something may have done wrong with the registration process.  On a node group instance, look at the file `/var/log/cloud-init-output.log` to check that the `/etc/eks/bootstrap.sh` was invoked, and check the file `/var/log/messages` for messages from `kubelet`.
 
 # TODO
 + EKS cluster log group

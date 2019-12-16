@@ -13,7 +13,7 @@ resource "aws_iam_role" "EksNodeGroup" {
     {
       "Effect": "Allow",
       "Principal": {
-        "Service": "sts.amazonaws.com"
+        "Service": "ec2.amazonaws.com"
       },
       "Action": "sts:AssumeRole"
     }
@@ -35,21 +35,33 @@ resource "aws_iam_instance_profile" "EksNodeGroupInstanceProfile" {
   role = aws_iam_role.EksNodeGroup.name
 }
 
+#
+# Standard policies for Amazon EKS node groups
+#
 resource "aws_iam_role_policy_attachment" "EksNodeGroup-AmazonEKSWorkerNodePolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
   role       = aws_iam_role.EksNodeGroup.name
 }
 
+#
+# Standard policies for Amazon EKS node groups
+#
 resource "aws_iam_role_policy_attachment" "EksNodeGroup-AmazonEC2ContainerRegistryReadOnly" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
   role       = aws_iam_role.EksNodeGroup.name
 }
 
+#
+# Standard policies for Amazon EKS node groups
+#
 resource "aws_iam_role_policy_attachment" "EksNodeGroup-AmazonEKS_CNI_Policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
   role       = aws_iam_role.EksNodeGroup.name
 }
 
+#
+# Extra policies for Amazon EKS node groups - to use persistent volumes
+#
 resource "aws_iam_role_policy" "EksNodeGroup-EbsCsiDriverPolicy" {
   name = "${var.cluster_name}-NodeGroup-EbsCsiDriverPolicy"
   role = aws_iam_role.EksNodeGroup.name
@@ -78,6 +90,9 @@ resource "aws_iam_role_policy" "EksNodeGroup-EbsCsiDriverPolicy" {
 EOF
 }
 
+#
+# Extra policies for Amazon EKS node groups - to use ALB as Ingress Controller
+#
 resource "aws_iam_role_policy" "EksNodeGroup-ALBIngressControllerPolicy" {
   name = "${var.cluster_name}-NodeGroup-ALBIngressControllerPolicy"
   role = aws_iam_role.EksNodeGroup.name
@@ -120,6 +135,9 @@ resource "aws_iam_role_policy" "EksNodeGroup-ALBIngressControllerPolicy" {
 EOF
 }
 
+#
+# Extra policies for Amazon EKS node groups - needed by Cluster Autoscaler
+#
 resource "aws_iam_role_policy" "EksNodeGroup-ClusterAutoScalerPolicy" {
   name = "${var.cluster_name}-NodeGroup-ClusterAutoScalerPolicy"
   role = aws_iam_role.EksNodeGroup.name
@@ -146,3 +164,10 @@ resource "aws_iam_role_policy" "EksNodeGroup-ClusterAutoScalerPolicy" {
 EOF
 }
 
+#
+# Extra policies - to enable SSM Session Manager
+#
+resource "aws_iam_role_policy_attachment" "EksNodeGroup-AmazonSSM" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  role       = aws_iam_role.EksNodeGroup.name
+}
