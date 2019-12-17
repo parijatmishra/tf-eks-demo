@@ -261,8 +261,8 @@ If after several minutes, you still don't see any nodes, something may have done
 + Generate kubeconfig
 + Tag VPC public subnets with 'kubernetes.io/cluster/<cluster-name>=shared'
 + EKS worker node launch configs and auto-scaling groups - one per AZ
-- EKS worker node IAM Role authentication ConfigMap
-- Create Nodegroup
++ EKS worker node IAM Role authentication ConfigMap
++ Create Nodegroup
 - Install metrics-server
 - Install kubernetes dashboard
 - Install prometheus
