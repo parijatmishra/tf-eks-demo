@@ -593,3 +593,8 @@ Commercial support is available at
 
 Notice that the `wget` command could resolve the hostname `hello-svc`.
 
+# TODO
+
+- metrics server
+- kubernetes dashboard
+- prometheus
