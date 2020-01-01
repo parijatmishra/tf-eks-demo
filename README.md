@@ -1,278 +1,590 @@
 # tf-eks-demo
-Amazon EKS cluster with Terraform
+
+A demo of how to manage an Amazon EKS cluster, node groups, and Kubernetes
+services, via Terraform.
+
+# Pre-requisites
+
+You will need:
+
+- the [Terraform CLI](https://www.terraform.io/downloads.html) installed'
+- an AWS account you have access to;
+- the [AWS CLI](https://aws.amazon.com/cli/) installed and configured to access the account.
+
+In each of the folders, there is a file `XXX-settings.tf`. Edit it to reflect
+the AWS region you want to use.
+
+You will need to give Terraform
+[access to AWS credentials](https://www.terraform.io/docs/providers/aws/index.html).
 
 ## VPC
 
-We need a VPC with an IGW, 3 public subnets, a NAT GW, 3 private subnets with route table set to route to the internet through the NAT GW. We can use an existing VPC or create a new one.
+Before we can create an EKS cluster, we need a VPC. Amazon EKS has
+[some requirements](eks-vpc) and suggestion for the design of the VPC.
 
-### VPC and Subnet Tagging Requirements
+Amazon EKS can work with 2 AZs, but in our cluster design (below), we have
+chosen to use 3. We need three public subnets and three private subnets, each in
+a separate AZ. We will need a NAT Gateway or Instance for the private subnets as
+well.
 
-**Important** We nee to tag the VPC and subnets properly, and for that we need the cluster's name.  For each new cluster that shares the VPC, we need to update the tags.
-
-[Amazon EKS needs some tags on the VPC and subnets it uses](eks-vpc-tags).  It creates some of the tags itself, but needs us to create some others.
-
+[eks-vpc]: https://docs.aws.amazon.com/eks/latest/userguide/network_reqs.html
 [eks-vpc-tags]: https://docs.aws.amazon.com/eks/latest/userguide/load-balancing.html#subnet-tagging-for-load-balancers
 
-1. Private subnets should be tagged with `kubernetes.io/role/internal-elb=1` - EKS will launch internal load balancers only in these subnets.
-2. Public subnets should be tagged with `kubernetes.io/role/elb=1` - EKS will launch public load balancers only in these subnets.
-3. Additionally, the VPC, and subnets (public and private) should be tagged with `kubernetes.io/cluster/<cluster-name>=shared` - EKS will not create resources in a VPC or subnet if they are not tagged with a tag with the cluster name in it.
+### Using an Existing VPC
 
-For (1) and (2), since the required tags don't need the cluster name, when we created the VPC above, we already tagged the public and private subnets.
+If you already have an existing VPC, ensure that:
 
-For (3): EKS automatically tags the VPC and the private subnets.  It **does not tag** the *public subnets*.  To tag the public subnets, we need the cluster name.
+- It has 3 public subnets and 3 private subnets
+- There is a NAT Gateway or Instance and the private subnets have access to the
+  internet via it.
+- The public and private subnets are tagged [properly](eks-vpc-tags)
 
-### Creating the VPC with right tags -- example
+### Creating a New VPC
 
-We have a sample terraform module for creating a VPC, using the `terraform-aws-modules/vpc/aws` module.
-
-    cd 01-vpc/
-
-We can tag the public and private subnets like so, and this does not change if we add new EKS clusters:
-
-```
-  public_subnet_tags = {
-    "kubernetes.io/role/elb" = "1"
-  }
-
-  private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = "1"
-  }
-```
-
-**Caution**. We are going to launch an EKS cluster, with the name `EksClusterTf` in this VPC. Since Amazon EKS tags the VPC and private subnets by itself, we could just add one more tag to the public subnet like this:
+We provide a module to create a new VPC meeting our requirements. To use it, go
+into the `01-vpc` folder, study the `02-vpc-variables.tf` file, and edit the
+`02-vpc-variables.auto.tfvars` file to fill values for the variables. Once done,
+create the VPC like this:
 
 ```
-  public_subnet_tags = {
-    "kubernetes.io/role/elb"             = "1"
-    "kubernetes.io/cluster/EksClusterTf" = "shared"
-  }
+terraform init # only once per machine
+terraform apply
 ```
 
-There is a problem with this approach.  Consider the following sequence of events:
-- We created the VPC. The public subnets have a cluster specific tag.
-- Below, we create an EKS cluster, specifying the VPC and private subnets.  EKS will tag the VPC and private subnets properly.  All seems well.  Except that terraform does not know about these additional tags.
-- Some time later, we happen to run the VPC module again, perhaps to add a new route table or security group. At this point, since terraform does not know about the additional tags added to VPC and private subnets, it *will try to remove them*!
+**Note**: the `default_tags` variable has a line like this:
 
 ```
-$ terraform plan -var-file vpc.tfvars
+  "kubernetes.io/cluster/EksClusterTf" = "shared"
+```
+
+Here, `EksClusterTf` is the name of the cluster we will launch (below). The VPC
+can be used for more than one cluster. If you launch more clusters in this VPC,
+you should *first* edit the `default_tags` variable and add a similar line for
+the new cluster. If you don't, EKS may not be able to launch public load
+balancers in the public subnets.
+
+**Note**: Amazon EKS will automatically create the above tag on the VPC and
+private subnets, but not on public subnets. Instead of tagging everything as
+above, we could have just tagged the public subnets. Why are we tagging
+everything?
+
+When Amazon EKS tags our VPC and private subnets, Terraform does not know
+anything about it. As a result, if after launching one or more clusters in our
+VPC, if we were to ever apply the VPC module again, terraform would notice the
+additional tags, and *it would try to remove them*. For e.g., if we did not add
+the tag above, and after creating the cluster (below), tried to apply the VPC
+module again, we would see:
+
+```
+$ terraform plan
 ...
   # module.vpc.aws_subnet.private[2] will be updated in-place
   ~ resource "aws_subnet" "private" {
       ...
       ~ tags                            = {
-          - "kubernetes.io/cluster/EksClusterTf" = "shared" -> null
+          - "kubernetes.io/cluster/EksClusterTf" = "shared" -> null // <-- NOTE: deletion attempt
   # module.vpc.aws_vpc.this[0] will be updated in-place
   ~ resource "aws_vpc" "this" {
       ...
       ~ tags                             = {
-          - "kubernetes.io/cluster/EksClusterTf" = "shared" -> null
+          - "kubernetes.io/cluster/EksClusterTf" = "shared" -> null // <-- NOTE: deletion attempt
 ```
 
-**Workaround Approach**. We will per cluster tags to the `default_tags` variable in `vpc.tfvars` instead.  This tag will get applied to *all resources*, even those that don't need to be tagged.  But at least this way, terraform will not remove the tags where they are essential.
+
+We don't want that, so we have to pro-actively tell terraform about these tags.
+
+### Bastion EC2 Instance
+
+We may want to log into our worker nodes to debug them, and for that we will
+need a bastion node. If you don't plan to SSH into worker nodes, you don't need
+one.
+
+If you already have a bastion node, you can skip this step. Otherwise, we
+provide a module to create one. To use it, go into the `01a-bastion` folder,
+study the `02-bastion-variables.tf` file, and edit the
+`02-bastion-variables.auto.tfvars` file with appropriate values. Then, run:
 
 ```
-default_tags = {
-  Application                          = "EksClusterTf"
-  Environment                          = "dev"
-  "kubernetes.io/cluster/EksClusterTf" = "shared"
-}
+terraform init # only once on each new workstation after checkout out this code
+terraform apply
 ```
-
-**Important**: Replace `EksCLusterTf` with your own chosen name for your cluster. You will have to add more such tags for each new cluster you launch in this VPC.
-
-Now we can build out VPC:
-
-    terraform init # if not done previously in this module
-    terraform apply --var-file vpc.tfvars
-
-**Important**: For every new EKS cluster that will share this VPC, we will have to update the tags above.
 
 ## EKS Cluster
 
-We will create a EKS cluster or "control plane", and then generate a Kubeconfig file to authenticate to it in later sections.
+We will now create our EKS control plane. We provide the module `02-controlplane` for this. This module will generate a `kubeconfig` file, using the AWS CLI. To ensure your CLI is setup, try the following commands:
 
-Go into the directory:
+```
+aws sts get-caller-identity
+```
 
-    cd 02-eks-cluster
+This should output information about the the AWS account and IAM identity it is
+configured to use. You should see something like the following. If you get an
+error, you should check your configuration.
 
-Create/Edit file `variables.tfvars` with the following keys and values:
+```
+{
+    "UserId": "XXXXXXXXXXXXXXXXXXX",
+    "Account": "YYYYYYYYYYY",
+    "Arn": "arn:aws:iam::YYYYYYYYYYY:user/zzzzzz"
+}
+```
 
-- `default_tags`: choose any number of tags to apply to the resources created by this module.
-- `cluster_name`: a name for your cluster, kept in variable for consistency.  We use the name `EksClusterTf` in the commands below.  Substitute that with the name you specify here.
-- `vpc_id`: VPC ID of the VPC.  You can get it from the output of the previous section (`terraform output vpc_id`)
-- `vpc_private_subnets`: A list of 3 private subnet IDs.  You can get it from the outputof the previoous section (`terraform output vpc_private_subnet_ids`)
+You should have permissions to Amazon EKS. Try the command:
 
-The `variables.tfvars` file should look something like this:
+```
+aws eks list-clusters
+```
 
-    default_tags = {
-        Application = "EksClusterTf"
-        Environment = "dev"
-    }
+You should get a list of clusters if any exist, otherwise an empty list:
 
-    cluster_name = "EksClusterTf"
+```
+{
+    "clusters": []
+}
+```
 
-    vpc_id = "vpc-00f201ec4c27127a6"
+Go into the `02-controlplane` folder, study the `02-controlplane-variables.tf`
+file, and edit the `02-controlplane-variables.auto.tfvars` file with appropriate
+values.
 
-    vpc_private_subnet_ids = [
-        "subnet-0233ab82d2f14371a",
-        "subnet-0c7a3cf7b2e829ef8",
-        "subnet-0655629959cd0e80b",
-    ]
+You will get the values of most variables from the outputs of the previous
+modules. The new variables to take note of are:
 
-Now run terraform to build the EKS cluster:
+- `cluster_name`: The of the cluster you intend to create. This should match the
+  name of the cluster you used in `default_tags` in the `01-vpc` module. If you
+  use a different name here, go back and edit the vpc module and apply the
+  changes there beforehand.
 
-    $ terraform init # if not done previously in this module
-    $ terraform apply --var-file variables.tfvars
+- `kubeconfig_path`: An absolute or relative path to a location where the
+  cluster's Kubeconfig file will be written to. This will be used by subsequent
+  commands. A good value could be `~/.kube/<cluster-name>.kubeconfig`. You
+  should also set the environment variable `KUBECONFIG` to the value you choose
+  here, in every terminal session where you intend to connect to this cluster.
 
-Once the cluster is built, generate a kubeconfig for use with `kubectl` command line too, and/or the terraform `kubernetes` provider:
+Then, run:
 
-    aws eks update-kubeconfig --name EksClusterTf --kubeconfig ~/.kube/EksClusterTf
+```
+terraform init # only once on each new workstation after checkout out this code
+terraform apply
+```
 
-We use a custom location for our cluster's kubeconfig instead of merging our config into the default location (`~/.kube/config`) so that we don't accidentally operate on the wrong cluster.
+Before going further, ensure the cluster has been successfully created **and is
+in the ACTIVE state**. You can check the cluster's state in the AWS console, or
+via the AWS CLI like this:
 
-Set the environment variable `KUBECONFIG` to point to this file, so that subsequent commands use this config.
+```
+aws eks describe-cluster --name "TfEksDemo" --query cluster.status
+"CREATING" # Not active
+```
 
-    export KUBECONFIG=~/.kube/EksClusterTf
+```
+aws eks describe-cluster --name "TfEksDemo" --query cluster.status
+"ACTIVE" # Ready, proceed with the next steps
+```
+
+Once the cluster is built, a `kubeconfig` file for use with `kubectl` command
+line or the terraform `kubernetes` provider will be created at the path
+specified by `kubeconfig_path` variable. Check the contents of the file to see
+it is well-formed.
+
+If the file did not get generated for some reason (most common being the `aws`
+cli not being available or configured properly), you can generate it manually,
+instead of creating the cluster again, with the following command:
+
+```
+aws eks update-kubeconfig --name EksClusterTf --kubeconfig <kubeconfig_path>
+```
+
+**Note**: We use a custom location for our cluster's kubeconfig instead of
+merging our config into the default location (`~/.kube/config`) so that we don't
+accidentally operate on the wrong cluster.
+
+Set the environment variable `KUBECONFIG` to point to this file, so that
+subsequent commands use this config.
+
+```
+export KUBECONFIG=<kubeconfig-path>
+```
 
 To verify that you can access the cluster usnig kubectl, you can try:
 
-    $ kubectl get svc
-    NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
-    kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   28h
-
-## Node Group
-
-Before running the commands below, ensure `kubectl` is in the `PATH`, and `KUBECONFIG` is set and pointing to the right kubeconfig. (If you are using a single kubeconfig, ensure the `current-context` is pointing to the right context.)
-
-### Node Group worker nodes
-
-We will create an "unmanaged" node group - that is, a node group whose instances are created by an auto-scaling group we define.  In fact, we will create three auto-scaling groups, one for each AZ.  This is because we will be using a Kubernetes controller named "Cluster Autoscaler" later, and that does not work well with ASGs that span multiple AZs.  This situation may change in future if Cluster Autoscaler is enhanced to work with multi-AZ ASGs.
-
-*Note* there are two other ways of creating node groups - "Managed node groups" via the AWS EKS API, and a "Fargate profile", also via the EKS API. We do not cover them here.
-
-Go into the directory:
-
-    cd 03-eks-cluster/
-
-Create/edit a `variables.tfvars` file with the following information:
-
-- `default_tags`: same as above.
-- `cluster_name`: same as above; should be the same value as in the previous section, otherwise the nodes will not be able to join the cluster.
-- `vpc_id`: same as above.
-- `vpc_private_subnet_ids`: same as above.
-- `ssh_keypair_name`: specify an EC2 keypair name, to be able to SSH into the worker nodes. The keypair must already exist.
-- `cluster_security_group_id`: the EC2 Security Group for the control plane; you can get its value from the output of the previous module (`terraform output cluster_security_group_id`)
-- `cluster_endpoint`: the Kubernetes API endpoint of our cluster created above; you can get its value from the output of the previous module (`terraform output cluster_endpoint`)
-- `cluster_certificate_authority_data`: the Kubernetes cluster's CA's certificate; you can get its value from the output of the previous module (`terraform output cluster_certificate_authority` and copy the value of the `data` field).
-
-The `variables.tfvars` file should look something like this:
-
 ```
-default_tags = {
-  Application = "EksClusterTf"
-  Environment = "dev"
-}
-
-cluster_name = "EksClusterTf"
-
-vpc_id = "vpc-00f201ec4c27127a6"
-
-vpc_private_subnet_ids = [
-  "subnet-0233ab82d2f14371a",
-  "subnet-0c7a3cf7b2e829ef8",
-  "subnet-0655629959cd0e80b",
-]
-
-ssh_keypair_name = "general1"
-
-cluster_security_group_id = "sg-0f894f76d939e967a"
-
-cluster_endpoint = "https://....eks.amazonaws.com"
-
-cluster_certificate_authority_data = "LS0tLS1C..."
+$ kubectl get svc
+NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   10m
 ```
 
-**Note: you will quickly (in a few mins) need to execute the instructions in the next paragraph as well, otherwise the nodegroup creation will fail.**
+## NodeGroup IAM role
 
-To create the cluster, run:
+We will create "worker nodes" or node groups below. Worker nodes are just EC2
+instances. Amazon EKS provides AMIs optimized for use with EKS. This AMI
+contains a preinstalled
+[`bootstrap.sh`](https://github.com/awslabs/amazon-eks-ami/blob/master/files/bootstrap.sh)
+file that is expected to be invoked at boot time via user-data. This script
+calls Kubernetes APIs to register the instance as a worker node. The only
+mandatory argument is the cluster name, which the script can use to look up the
+cluster's Kubernetes API server endpoint and then register itself.
 
-    $ terraform init # if not done previously in this module
-    $ terraform apply -var-file=variables.tfvars
+To successfully call the Kubernetes APIs, the bootstrap script must have an
+identity already registered in the Kubernetes RBAC system (which is different
+from AWS IAM). On AWS, instead of creating an identity separately, it is
+recommended that we use an IAM role for the worker node EC2 instances, and
+register that IAM role in the Kubernetes RBAC system. This way, we don't have to
+pass any authentication credentials to the worker nodes in the user-data
+explicitly, keeping our IaC code free of sensitive information. The bootstrap
+script will get the IAM role's credentials from EC2 metadata, and use that to
+make calls to Kubernetes.
 
-Note the output `nodegroup_iam_role_arn`.  We will need it quickly.
+Most online tutorials for EKS create the IAM role as part of the node group
+creation. They then ask you to register the IAM role with the Kubernetes RBAC
+system *while the nodes are still booting*, quickly, before the nodes try to
+call the Kubernetes API. If you don't do this, the API calls will fail and the
+nodes will not register. So there is a timing issue: the IAM role is created
+just before the nodes are, and you have to register it before the nodes start
+calling Kubernetes, giving you only one or two minutes. (To be precise, the
+bootstrap script will try a few times, so in practice you have a bit more time,
+but still if you delay then the bootstrap script will exhaist its retry attempts
+and fail.)
 
-In the top directory, edit the file `kubernetes-config-map.sh`.  Replace the text `$NODEGROUP_IAM_ROLE_ARN` with the value of the `nodegroup_iam_role_arn` captured above.  Uncomment the first `- rolearn` stanza under `mapRoles`, so it looks something like this:
+We will remove this timing constraint. We will create the IAM role first.
+
+To do so, go into the `03-nodegroup-iam` folder, study the
+`02-nodegroup-iam-variables.tf` file, and edit the
+`02-nodegroup-iam-variables.auto.tfvars` file with appropriate values. You will
+find the values in the outputs or inputs of the earlier modules. Then run:
 
 ```
+terraform init # only once on each new workstation after checkout out this code
+terraform apply
+```
+
+## Kubernetes RBAC: The `aws-auth` Config Map
+
+To allow our NodeGroup EC2 instances to register themselves with Kubernetes, we
+must add the NodeGroup IAM role to it.
+
+To do so, go into the `04-authmap` folder and edit the `03-authmap-authmap.yml`
+file. The `mapRoles` field has a multi-line string value which itself is a YAML document. In the yaml document, replace the value of `rolearn` field with the NodeGroup IAM role ARN here.
+
+**Note**: In an earlier module we created the NodeGroup IAM role. We specified a
+`path` of `/` for the role. If you did not change it, you can copy the
+`nodegroup_iam_role_arn` value from the output as-is. If you did change the path
+to something other than `/`, then the output of the earlier module would have
+contained a path in the ARN, like this:
+
+```
+nodegroup_iam_role_arn = arn:aws:iam::838522581324:role/Some/Path/Here/TfEksDemo-NodeGroup
+```
+
+You **must** remove the path when copying the ARN. The input ARN to this module
+must look like `...:role/<name-of-role>`.
+
+Now run:
+
+```
+terraform init # only once on each new workstation after checkout out this code
+terraform apply
+```
+
+To check that the config map was created correctly, run the command:
+
+```
+kubectl get cm aws-auth -n kube-system -o yaml
+```
+
+The output should be similar to the following:
+
+```
+apiVersion: v1
+data:
   mapRoles: |
-      - rolearn: <ARN you captured above>
-        username: system:node:{{EC2PrivateDNSName}}
-        groups:
-          - system:bootstrappers
-          - system:nodes
-#     - rolearn: $ADMINISTRATOR_ROLE_ARN
+    - rolearn: arn:aws:iam::838522581324:role/TfEksDemo-NodeGroup
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes
+kind: ConfigMap
+metadata:
 ...
 ```
 
-Now, run:
+> **Note**: Why do we not create this config map when we created the node group
+> above, in a single step? Because the `aws-auth` config map is used for more
+> than the worker node IAM roles; it is the central location for *all* IAM
+> integration with Kubernetes RBAC. We need to separate it out because you will
+> use this for other IAM entities as well. See
+[Managing Users or IAM Roles for your Cluster](add-user-role).
 
-    $ sh kubernetes-config-map.sh
+[add-user-role]: https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html
 
-The EC2 instances will register as Kubernetes nodes in a few minutes.  To check their status, run:
+## Node Groups
 
-    $ kubectl get nodes
+Now we are ready to create our node groups. There are three ways of adding nodes to our cluster:
 
-This should give you a list of nodes.
+- "Unmanaged" node groups: this is where *we* create the nodes and register them with Kubernetes. This gives us the maximum control, but we have to the most work.
+- "Managed" node groups: we make an API call to Amazon EKS (i.e., the AWS EKS API, not the Kubernetes API), and it will create a node group for us and register the nodes with Kubernetes. It achieves the same thing as above more easily, but we have less control.
+- "Fargate profile": this is not a node group, strictly speaking, but a new scheduler in Kubernetes; enaling it allows us to specify that pods run on "Fargate".
 
-**What did we just do?**
+## Unmanaged Node Groups
 
-We created a node group above, by creating an Auto-Scaling Group that will launch EC2 instances from an AWS provided, EKS optimized AMI.  In the user-data of the instance, we will invoke a built-in "bootstrap script", giving it our cluster name as an argument. The bootstrap script will discover the endpoint of the cluster with the specified name, by calling the AWS EKS APIs. Then it will call the K8S APIs to register the node. To be able to do this, the code running in the EC2 instance:
+We will create an "unmanaged" node group. We will create auto-scaling groups,
+that will then create EC2 instances which which then register themselves with
+Kubernetes as nodes. We will create three auto-scaling groups, one for each AZ.
+This is because we will be using a Kubernetes controller named "Cluster
+Autoscaler" later, and that does not work well with ASGs that span multiple AZs.
+This situation may change in future if Cluster Autoscaler is enhanced to work
+with multi-AZ ASGs.
 
-1. Needs to have the credentials to call AWS EKS APIs
-2. Needs to have credentials to call K8S APIs - note that K8S uses its own RBAC system
+Go to the `05-nodegroup-unmanaged` folder, study the
+`02-nodegroup-unmanaged-variables.tf` file, and edit the
+`02-nodegroup-unmanaged-variables.auto.tfvars` file with appropriate values. You can get the values for most variables from the output/inputs of earlier modules. The following are new:
 
-For (1) we will create an IAM role and an EC2 instance profile that uses that role.  The role will have permissions to call various AWS APIs.
+- ssh_keypair_name: specify an *existing* EC2 keypair name; this will allow you
+  to SSH into the worker nodes
+- allow_ssh_security_group_ids: SSH into worker nodes is allowed only from other
+  security groups; specify a list here. You would want to specify the security
+  group ID of your bastion instance.
+- instance_type: the EC2 instance type to use; the value will depend on your
+  intended usage.
 
-For (2) we can use the same IAM role, but we have to tell Kubernetes about it.  On AWS EKS, the K8S API server can *authenticate* credentials with AWS IAM.  We have to provide the IAM role information to K8S in a `ConfigMap` named `aws-auth`.
+After a few minutes, your nodes should be registered and you should be able to see them:
 
-In the file `kubernetes-config-map.sh`, we run two commands:
-
-- the `cat <<EOF > aws-auth-cm.yml` command uses a bash HEREDOC syntax to create a file named `aws-auth-cm.yml`, with its contents being a Kubernetes `ConfigMap` named `aws-auth`.  In the steps above, we uncommented a `mapRoles` field and a role, and specified the ARN of our node's IAM role in the `rolearn` field.
-- the `kubectl apply ...` command then posts the config map to our K8S cluster.
-
-We had to run this command after starting out cluster creation because we don't have the IAM role beforehand.  When we ran the previous `terraform apply` command, because terraform will create an auto-scaling group, which will then create EC2 instances, which will run a bootstrap script, which starts calling the cluster's K8S APIs using our IAM role's credentials. If the K8S API call fails, the bootstrap script will retry a few times. This takes a few minutes, and that is the time we have to register the newly generated IAM role with K8S via a config map.
-
-We could have broken the node group generation step in two phases:
-
-- generate the IAM role and then register it with K8S using the config map
-- launch the node group, secure in the knowledge that our IAM role is already registered and the bootstrap script will succeed the first time.
+```
+$ kubectl get nodes
+NAME                          STATUS   ROLES    AGE   VERSION
+ip-10-2-101-75.ec2.internal   Ready    <none>   20m   v1.14.8-eks-b8860f
+ip-10-2-146-81.ec2.internal   Ready    <none>   20m   v1.14.8-eks-b8860f
+ip-10-2-94-162.ec2.internal   Ready    <none>   20m   v1.14.8-eks-b8860f
+```
 
 **Troubleshooting**
 
-If after several minutes, you still don't see any nodes, something may have done wrong with the registration process.  On a node group instance, look at the file `/var/log/cloud-init-output.log` to check that the `/etc/eks/bootstrap.sh` was invoked, and check the file `/var/log/messages` for messages from `kubelet`.
+If after several minutes, you still don't see any nodes, something may have done wrong with the registration process. SSH into a node group instance, look at the file `/var/log/cloud-init-output.log` to check that the `/etc/eks/bootstrap.sh` was invoked, and check the file `/var/log/messages` for messages from `kubelet`.
 
-# TODO
-+ EKS cluster log group
-+ EKS service IAM role
-+ EKS worker node IAM role
-+ EKS control plane security group
-+ EKS node group security group
-+ EKS cluster with logging enabled - using auto-scaling per az
-+ Generate kubeconfig
-+ Tag VPC public subnets with 'kubernetes.io/cluster/<cluster-name>=shared'
-+ EKS worker node launch configs and auto-scaling groups - one per AZ
-+ EKS worker node IAM Role authentication ConfigMap
-+ Create Nodegroup
-- Install metrics-server
-- Install kubernetes dashboard
-- Install prometheus
-- Install cluster autoscaler
-- Install vertical pod autoscaler
-- Associate IAM OIDC provider
-- Deploy a simple pod and
-    - scale vertically
-    - scale horizontally
-    - scale cluster
-- Use MixedInstancesPolicy with ASG to start using Spot
-- Use Fargate (use it for load tests?)
-- Use EKS Managed Node Groups
+If you see errors related to permissions, check you `aws-auth` config map. Even
+a small typo, or indentation error in the embedded yaml, can cause
+authentication to fail silently. Ensure the output of
+`kubectl get cm aws-auth -n kube-system -o yaml` is as conforms to the format
+(including indentation) in [add-user-role].
+
+Check
+[Amazon EKS Troubleshooting](https://docs.aws.amazon.com/eks/latest/userguide/troubleshooting.html)
+for more information.
+
+
+## Managing K8S objects via Terraform
+
+Most people use `kubectl` and Kubernetes YAML files to declaratively manage
+their clusters. However, we'd like to use a single system - Terraform - to
+manage our environment as much as possible. The
+[Terraform Kubernetes Provider][tf-k8s] can help.
+
+To try this, go into the `10-tf-k8s-test` folder, edit the `variables.auto.tfvars` file with appropriate values (the names are self-explanatory), and run:
+
+```
+$ terraform init # if not done before
+$ terraform apply
+```
+
+[tf-k8s]: https://www.terraform.io/docs/providers/kubernetes/index.html
+
+What follows an explanation of what this module does.
+
+### Configuring the Kubernetes Provider
+
+The `kubernetes` provider is configured in the file `settings.tf`. Here, we just
+need to ensure the environment variable `KUBECONFIG` is pointing to the
+kubeconfig file we generated above.
+
+### Creating a namespace
+
+The file `01-namespace.tf` shows how to create a new namespace named `test`.
+
+### Managing a pod
+
+The file `02-pod.tf` creates a pod named `hello-pod` in the `test` namespace,
+with label `app=hello-pod`. You can check that the pod is running by:
+
+```
+kubectl get pods -n test -l app=hello-pod -o wide
+```
+
+The output should be similar to:
+
+```
+NAME        READY   STATUS    RESTARTS   AGE    IP            NODE                           NOMINATED NODE   READINESS GATES
+hello-pod   1/1     Running   0          176m   10.2.121.14  .ip-10-2-102-225.ec2.internal   <none>           <none>
+```
+
+You can get more details about the pod:
+
+```
+kubectl describe pods -n test -l app=hello-pod
+```
+
+The output should be similar to:
+
+```
+Name:               hello-pod
+Namespace:          test
+...
+Containers:
+  httpd:
+    ...
+    Image:          nginx:1.17
+...
+```
+
+You can see the pod above has one container, named `httpd`. You can SSH in to it and run commands like this:
+
+
+```
+kubectl exec hello-pod --container httpd -n test -it -- bash -il
+```
+
+This will give you a shell prompt (`root@hello-pod:/` for this container) where you can run commands:
+
+```
+root@hello-pod:/# nginx -V
+nginx version: nginx/1.17.6
+...
+```
+
+### Managing a Deployment
+
+The file `03-deployment.tf` creates a Deployment named `hello-dep` in the `test` namespace, running 3 replicas of a pod very similar to the previous one, labeled with `app=hello-pod-dep` (note that the app label is diffrent from the deployment label). You can check the the deployment and pods are running, like this:
+
+```
+kubectl get deployments -n test -l app=hello-dep -o wide
+```
+
+The output should be similar to:
+
+```
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE    CONTAINERS   IMAGES       SELECTOR
+hello-dep   3/3     3            3           179m   httpd        nginx:1.17   app=hello-dep-pod
+```
+
+You can get more details:
+
+```
+kubectl describe deployments hello-dep -n test
+```
+
+The output should be similar to:
+
+```
+Name:                   hello-dep
+Namespace:              test
+...
+Pod Template:
+  Labels:  app=hello-dep-pod
+  Containers:
+   httpd:
+...
+```
+
+You can list the pods:
+
+```
+kubectl get pods -n test -l app=hello-dep-pod -o wide
+```
+
+The output should be similar to:
+
+```
+NAME                         READY   STATUS    RESTARTS   AGE    IP             NODE                           NOMINATED NODE   READINESS GATES
+hello-dep-5d4499db45-fxr44   1/1     Running   0          3h2m   10.2.142.50    ip-10-2-153-187.ec2.internal   <none>           <none>
+hello-dep-5d4499db45-hklb8   1/1     Running   0          3h2m   10.2.65.237    ip-10-2-82-164.ec2.internal    <none>           <none>
+hello-dep-5d4499db45-ktpnm   1/1     Running   0          3h2m   10.2.109.172   ip-10-2-102-225.ec2.internal   <none>           <none>
+```
+
+### Managing a Service: Cluster-Internal
+
+We can create a K8S `ClusterIP` service to expose our deployment pods to other pods within the cluster.  The pods will not be accessible from outside our VPC or even from outside our cluster.
+
+The file `04-service-clusterip.tf` shows how to create a deployment of pods, and map a service to it. While the containers of the pods listen on port `80`, the service listens on a cluster internal IP at port `8080`. The service, deployment and the pods all have a label `app=hello-svc`. The service has been configured to look for pods with the label `app=hello-svc`. You can check that the service, deployment and pods are up:
+
+```
+$ kubectl get svc -n test -l app=hello-svc -o wide
+NAME        TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE    SELECTOR
+hello-svc   ClusterIP   172.20.13.82   <none>        8080/TCP   136m   app=hello-svc
+
+$ kubectl describe svc hello-svc -n test
+Name:              hello-svc
+Namespace:         test
+Labels:            app=hello-svc
+Annotations:       <none>
+Selector:          app=hello-svc
+Type:              ClusterIP
+IP:                172.20.13.82
+Port:              <unset>  8080/TCP
+TargetPort:        80/TCP
+Endpoints:         10.2.112.202:80,10.2.138.193:80,10.2.66.147:80
+Session Affinity:  ClientIP
+Events:            <none>
+
+$ kubectl get deployments -n test -l app=hello-svc -o wide
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS   IMAGES       SELECTOR
+hello-svc   3/3     3            3           15m   httpd        nginx:1.17   app=hello-svc
+
+$ kubectl describe deployments hello-svc -n test
+Name:                   hello-svc
+Namespace:              test
+CreationTimestamp:      Wed, 18 Dec 2019 16:53:37 +0800
+Labels:                 app=hello-svc
+Annotations:            deployment.kubernetes.io/revision: 1
+Selector:               app=hello-svc
+Replicas:               3 desired | 3 updated | 3 total | 3 available | 0 unavailable
+StrategyType:           RollingUpdate
+MinReadySeconds:        0
+...
+
+$ kubectl get pods -n test -l app=hello-svc -o wide
+NAME                         READY   STATUS    RESTARTS   AGE   IP             NODE                           NOMINATED NODE   READINESS GATES
+hello-svc-6d9df7cc6c-57jsp   1/1     Running   0          17m   10.2.66.147    ip-10-2-82-164.ec2.internal    <none>           <none>
+hello-svc-6d9df7cc6c-bvnwc   1/1     Running   0          17m   10.2.112.202   ip-10-2-102-225.ec2.internal   <none>           <none>
+hello-svc-6d9df7cc6c-cq5h4   1/1     Running   0          17m   10.2.138.193   ip-10-2-153-187.ec2.internal   <none>           <none>
+```
+
+Notice that the pods' IP addresses are reflected in the service's `Endpoints` object.
+
+Pods inside the cluster can access the service at port `8080` using the automatically registered DNS name `hello-svc`. To test this, we first launch a "shell" container in the cluster in the same namespace `test`:
+
+```
+$ kubectl run -it shell --image=busybox /bin/sh -n test
+/ #
+```
+
+Our pod is running an `nginx` web server in its default config. We can try accessing the index page:
+
+```
+/ # wget -qO - http://hello-svc:8080/
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+<style>
+    body {
+        width: 35em;
+        margin: 0 auto;
+        font-family: Tahoma, Verdana, Arial, sans-serif;
+    }
+</style>
+</head>
+<body>
+<h1>Welcome to nginx!</h1>
+<p>If you see this page, the nginx web server is successfully installed and
+working. Further configuration is required.</p>
+
+<p>For online documentation and support please refer to
+<a href="http://nginx.org/">nginx.org</a>.<br/>
+Commercial support is available at
+<a href="http://nginx.com/">nginx.com</a>.</p>
+
+<p><em>Thank you for using nginx.</em></p>
+</body>
+</html>
+```
+
+Notice that the `wget` command could resolve the hostname `hello-svc`.

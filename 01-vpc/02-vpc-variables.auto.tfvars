@@ -1,6 +1,10 @@
+vpc_name = "TfEksDemo"
 default_tags = {
-  Application                          = "EksClusterTf"
-  Environment                          = "dev"
+  Application = "TfEksDemo"
+  Environment = "dev"
+  /* Tag VPC and subnets with "kubernetes.io/cluster/<cluster-name>=shared"
+   * for *each* cluster you plan to launch in this VPC.
+   */
   "kubernetes.io/cluster/EksClusterTf" = "shared"
 }
 

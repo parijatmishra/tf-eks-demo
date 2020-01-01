@@ -17,7 +17,7 @@ resource "aws_eks_cluster" "EksControlPlane" {
 
   enabled_cluster_log_types = [
     "api",
-    "audit",
+    # "audit",
     "authenticator",
     # "controllermanager",
     # "scheduler"
@@ -26,8 +26,8 @@ resource "aws_eks_cluster" "EksControlPlane" {
   vpc_config {
     endpoint_private_access = true
     endpoint_public_access  = true
-    security_group_ids      = [aws_security_group.EksControlPlane.id]
-    subnet_ids              = var.vpc_private_subnet_ids
+    # security_group_ids      = [aws_security_group.EksControlPlane.id]
+    subnet_ids = var.vpc_private_subnet_ids
   }
 
 
@@ -42,5 +42,8 @@ resource "aws_eks_cluster" "EksControlPlane" {
     "Name" = var.cluster_name
   }, var.default_tags)
 
+  provisioner "local-exec" {
+    command = "aws eks update-kubeconfig --name ${var.cluster_name} --kubeconfig ${var.kubeconfig_path}"
+  }
 }
 
