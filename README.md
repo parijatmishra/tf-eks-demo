@@ -54,10 +54,10 @@ terraform apply
 **Note**: the `default_tags` variable has a line like this:
 
 ```
-  "kubernetes.io/cluster/EksClusterTf" = "shared"
+  "kubernetes.io/cluster/TfEksDemo" = "shared"
 ```
 
-Here, `EksClusterTf` is the name of the cluster we will launch (below). The VPC
+Here, `TfEksDemo` is the name of the cluster we will launch (below). The VPC
 can be used for more than one cluster. If you launch more clusters in this VPC,
 you should *first* edit the `default_tags` variable and add a similar line for
 the new cluster. If you don't, EKS may not be able to launch public load
@@ -82,12 +82,12 @@ $ terraform plan
   ~ resource "aws_subnet" "private" {
       ...
       ~ tags                            = {
-          - "kubernetes.io/cluster/EksClusterTf" = "shared" -> null // <-- NOTE: deletion attempt
+          - "kubernetes.io/cluster/TfEksDemo" = "shared" -> null // <-- NOTE: deletion attempt
   # module.vpc.aws_vpc.this[0] will be updated in-place
   ~ resource "aws_vpc" "this" {
       ...
       ~ tags                             = {
-          - "kubernetes.io/cluster/EksClusterTf" = "shared" -> null // <-- NOTE: deletion attempt
+          - "kubernetes.io/cluster/TfEksDemo" = "shared" -> null // <-- NOTE: deletion attempt
 ```
 
 
@@ -192,7 +192,7 @@ cli not being available or configured properly), you can generate it manually,
 instead of creating the cluster again, with the following command:
 
 ```
-aws eks update-kubeconfig --name EksClusterTf --kubeconfig <kubeconfig_path>
+aws eks update-kubeconfig --name TfEksDemo --kubeconfig <kubeconfig_path>
 ```
 
 **Note**: We use a custom location for our cluster's kubeconfig instead of
@@ -237,14 +237,11 @@ make calls to Kubernetes.
 
 Most online tutorials for EKS create the IAM role as part of the node group
 creation. They then ask you to register the IAM role with the Kubernetes RBAC
-system *while the nodes are still booting*, quickly, before the nodes try to
-call the Kubernetes API. If you don't do this, the API calls will fail and the
-nodes will not register. So there is a timing issue: the IAM role is created
-just before the nodes are, and you have to register it before the nodes start
-calling Kubernetes, giving you only one or two minutes. (To be precise, the
-bootstrap script will try a few times, so in practice you have a bit more time,
-but still if you delay then the bootstrap script will exhaist its retry attempts
-and fail.)
+system *while the nodes are still booting*.  If you don't do this, the API
+calls will fail and the nodes will not register.  To be precise, the bootstrap
+script keeps retrying, so in practice once you've registered the IAM role, the
+nodes should eventually register. However, we prefer to not have a timing
+issue.
 
 We will remove this timing constraint. We will create the IAM role first.
 
@@ -370,7 +367,6 @@ authentication to fail silently. Ensure the output of
 Check
 [Amazon EKS Troubleshooting](https://docs.aws.amazon.com/eks/latest/userguide/troubleshooting.html)
 for more information.
-
 
 ## Managing K8S objects via Terraform
 
@@ -588,3 +584,4 @@ Commercial support is available at
 ```
 
 Notice that the `wget` command could resolve the hostname `hello-svc`.
+
