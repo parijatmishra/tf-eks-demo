@@ -109,7 +109,7 @@ terraform init # only once on each new workstation after checkout out this code
 terraform apply
 ```
 
-## EKS Cluster
+# EKS Cluster
 
 We will now create our EKS control plane. We provide the module `02-controlplane` for this. This module will generate a `kubeconfig` file, using the AWS CLI. To ensure your CLI is setup, try the following commands:
 
@@ -322,7 +322,7 @@ Now we are ready to create our node groups. There are three ways of adding nodes
 - "Managed" node groups: we make an API call to Amazon EKS (i.e., the AWS EKS API, not the Kubernetes API), and it will create a node group for us and register the nodes with Kubernetes. It achieves the same thing as above more easily, but we have less control.
 - "Fargate profile": this is not a node group, strictly speaking, but a new scheduler in Kubernetes; enaling it allows us to specify that pods run on "Fargate".
 
-## Unmanaged Node Groups
+### Unmanaged Node Groups
 
 We will create an "unmanaged" node group. We will create auto-scaling groups,
 that will then create EC2 instances which which then register themselves with
@@ -368,7 +368,15 @@ Check
 [Amazon EKS Troubleshooting](https://docs.aws.amazon.com/eks/latest/userguide/troubleshooting.html)
 for more information.
 
-## Managing K8S objects via Terraform
+### Managed NodeGroups
+
+TODO
+
+### Fargate Profile
+
+TODO
+
+# Managing K8S objects via Terraform
 
 Most people use `kubectl` and Kubernetes YAML files to declaratively manage
 their clusters. However, we'd like to use a single system - Terraform - to
