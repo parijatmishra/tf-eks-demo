@@ -7,6 +7,7 @@ services, via Terraform.
 
 You will need:
 
+- The `git` CLI
 - the [Terraform CLI](https://www.terraform.io/downloads.html) installed'
 - an AWS account you have access to;
 - the [AWS CLI](https://aws.amazon.com/cli/) installed and configured to access the account.
@@ -16,6 +17,14 @@ the AWS region you want to use.
 
 You will need to give Terraform
 [access to AWS credentials](https://www.terraform.io/docs/providers/aws/index.html).
+
+This repo refers to other repos using git submodules. You will need to
+initialize them with the following commands:
+
+```
+git submodule init
+git submidule update
+```
 
 ## VPC
 
@@ -375,6 +384,103 @@ TODO
 ### Fargate Profile
 
 TODO
+
+# Monitoring
+
+## Metrics Server
+
+The [Metrics Server](https://github.com/kubernetes-sigs/metrics-server) is a core part of the [Kubernetes Monitoring Architecture](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/instrumentation/monitoring_architecture.md) but it is not installed by default on EKS clusters. It can be installed by checking its code from GitHub and following the instructions, or by following the instructions in the [Amazon EKS documentation](https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html). We will provide instructions to deploy it below.
+
+Before installing metrics-server, we will not be able to get node level or pod level aggregated metrics. For e.g.. the following two commands will give you errors:
+
+```
+kubectl top nodes
+kubectl top pods
+```
+
+### Installing Metrics Server from GitHub Source
+
+We have added the metrics-server GitHub repo to our project as a sub-module, for convenience, at `external/metrics-server`. Go into that folder and run:
+
+```
+# In folder 'external/metrics-server'
+kubectl apply -f deploy/1.8+/
+```
+
+The output should be like the following:
+
+```
+clusterrole.rbac.authorization.k8s.io/system:aggregated-metrics-reader created
+clusterrolebinding.rbac.authorization.k8s.io/metrics-server:system:auth-delegator created
+rolebinding.rbac.authorization.k8s.io/metrics-server-auth-reader created
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
+serviceaccount/metrics-server created
+deployment.apps/metrics-server created
+service/metrics-server created
+clusterrole.rbac.authorization.k8s.io/system:metrics-server created
+clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
+```
+
+The `metrics-server` system creates a service with the same name. You can check that the service exists:
+
+```
+kubectl get svc metrics-server -n kube-system
+NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)   AGE
+metrics-server   ClusterIP   172.20.189.208   <none>        443/TCP   9m54s
+```
+
+You can get full details by appending the flag `-o yaml` to the above command. If you do so, you will observe that the service uses the selector `k8s-app: metrics-server` to find the matching pods.
+
+You can check that the `metrics-server` deployment is running from the following command:
+```
+kubectl get deployment metrics-server -n kube-system
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+metrics-server   1/1     1            1           4m51s
+```
+
+Again, you can get more details by appending the `-o yaml` flag to the command
+above. If you do so, you will observe in the output
+(`spec.template.metadata.labels`) that the deployment labels the pods it creates
+with `k8s-app=metrics-server`, which matches the service selector above.
+
+### Querying Resource Metrics
+
+Now that metrics-server is installed, we can query aggregated resource metrics, using, for e.g., the `kubectl top` command:
+
+```
+kubectl top nodes
+```
+
+The output should be like:
+
+```
+kubectl top node
+NAME                          CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+ip-10-2-101-75.ec2.internal   41m          2%     411Mi           14%
+ip-10-2-146-81.ec2.internal   31m          1%     369Mi           13%
+ip-10-2-94-162.ec2.internal   36m          1%     420Mi           14%
+```
+
+We can query pod-level metrics, with the following command (in the following example, we are querying pods in the `kube-system` namespace):
+
+```
+kubectl top pods -n kube-system
+```
+
+The output should be like:
+
+```
+NAME                              CPU(cores)   MEMORY(bytes)
+aws-node-5xcsz                    2m           22Mi
+aws-node-6wzjz                    3m           23Mi
+aws-node-t2zhw                    4m           23Mi
+coredns-56678dcf76-h4w7q          2m           7Mi
+coredns-56678dcf76-rs2v9          3m           6Mi
+kube-proxy-g4cp9                  1m           9Mi
+kube-proxy-k928c                  1m           9Mi
+kube-proxy-ln28r                  3m           9Mi
+metrics-server-596d74f577-c7vft   1m           11Mi
+```
 
 # Managing K8S objects via Terraform
 

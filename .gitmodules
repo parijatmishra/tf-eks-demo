@@ -1,0 +1,3 @@
+[submodule "external/metrics-server"]
+	path = external/metrics-server
+	url = https://github.com/kubernetes-sigs/metrics-server
