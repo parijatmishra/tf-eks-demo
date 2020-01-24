@@ -515,6 +515,26 @@ kube-proxy-ln28r                  3m           9Mi
 metrics-server-596d74f577-c7vft   1m           11Mi
 ```
 
+## Kubernetes Dashboard
+
+> [Kubernetes Dashboard](https://github.com/kubernetes/dashboard) is a general
+> purpose, web-based UI for Kubernetes clusters. It allows users to manage
+> applications running in the cluster and troubleshoot them, as well as manage
+> the cluster itself.
+
+The dashboard is useful for visually inspecting the state of the cluster.
+
+While the dashboard allows users to create, start/stop and delete kubernetes
+resources, it should ideally not be used for this purpose; such resource
+management should be done declaratively, such as by using Kubernetes YAML files
+or Terraform playbooks. Doing administrative tasks via the dashboard guarantees
+your cluster's state will drift from your Infrastructre-as-Code (IaC)
+repository, cause conflict when multiple people are working on the same cluster,
+and break your automation.
+
+It uses Metrics Server so you should already have that installed, as above.
+
+
 # Managing K8S objects via Terraform
 
 Most people use `kubectl` and Kubernetes YAML files to declaratively manage
