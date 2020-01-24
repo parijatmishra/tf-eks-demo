@@ -120,7 +120,9 @@ terraform apply
 
 # EKS Cluster
 
-We will now create our EKS control plane. We provide the module `02-controlplane` for this. This module will generate a `kubeconfig` file, using the AWS CLI. To ensure your CLI is setup, try the following commands:
+We will now create our EKS control plane. We provide the module
+`02-controlplane` for this. This module will generate a `kubeconfig` file, using
+the AWS CLI. To ensure your CLI is setup, try the following commands:
 
 ```
 aws sts get-caller-identity
@@ -270,7 +272,9 @@ To allow our NodeGroup EC2 instances to register themselves with Kubernetes, we
 must add the NodeGroup IAM role to it.
 
 To do so, go into the `04-authmap` folder and edit the `03-authmap-authmap.yml`
-file. The `mapRoles` field has a multi-line string value which itself is a YAML document. In the yaml document, replace the value of `rolearn` field with the NodeGroup IAM role ARN here.
+file. The `mapRoles` field has a multi-line string value which itself is a YAML
+document. In the yaml document, replace the value of `rolearn` field with the
+NodeGroup IAM role ARN here.
 
 **Note**: In an earlier module we created the NodeGroup IAM role. We specified a
 `path` of `/` for the role. If you did not change it, you can copy the
@@ -327,9 +331,16 @@ metadata:
 
 Now we are ready to create our node groups. There are three ways of adding nodes to our cluster:
 
-- "Unmanaged" node groups: this is where *we* create the nodes and register them with Kubernetes. This gives us the maximum control, but we have to the most work.
-- "Managed" node groups: we make an API call to Amazon EKS (i.e., the AWS EKS API, not the Kubernetes API), and it will create a node group for us and register the nodes with Kubernetes. It achieves the same thing as above more easily, but we have less control.
-- "Fargate profile": this is not a node group, strictly speaking, but a new scheduler in Kubernetes; enaling it allows us to specify that pods run on "Fargate".
+- "Unmanaged" node groups: this is where *we* create the nodes and register them
+  with Kubernetes. This gives us the maximum control, but we have to the most
+  work.
+- "Managed" node groups: we make an API call to Amazon EKS (i.e., the AWS EKS
+  API, not the Kubernetes API), and it will create a node group for us and
+  register the nodes with Kubernetes. It achieves the same thing as above more
+  easily, but we have less control.
+- "Fargate profile": this is not a node group, strictly speaking, but a new
+  scheduler in Kubernetes; enaling it allows us to specify that pods run on
+  "Fargate".
 
 ### Unmanaged Node Groups
 
@@ -343,7 +354,9 @@ with multi-AZ ASGs.
 
 Go to the `05-nodegroup-unmanaged` folder, study the
 `02-nodegroup-unmanaged-variables.tf` file, and edit the
-`02-nodegroup-unmanaged-variables.auto.tfvars` file with appropriate values. You can get the values for most variables from the output/inputs of earlier modules. The following are new:
+`02-nodegroup-unmanaged-variables.auto.tfvars` file with appropriate values. You
+can get the values for most variables from the output/inputs of earlier modules.
+The following are new:
 
 - ssh_keypair_name: specify an *existing* EC2 keypair name; this will allow you
   to SSH into the worker nodes
@@ -353,7 +366,8 @@ Go to the `05-nodegroup-unmanaged` folder, study the
 - instance_type: the EC2 instance type to use; the value will depend on your
   intended usage.
 
-After a few minutes, your nodes should be registered and you should be able to see them:
+After a few minutes, your nodes should be registered and you should be able to
+see them:
 
 ```
 $ kubectl get nodes
@@ -365,7 +379,10 @@ ip-10-2-94-162.ec2.internal   Ready    <none>   20m   v1.14.8-eks-b8860f
 
 **Troubleshooting**
 
-If after several minutes, you still don't see any nodes, something may have done wrong with the registration process. SSH into a node group instance, look at the file `/var/log/cloud-init-output.log` to check that the `/etc/eks/bootstrap.sh` was invoked, and check the file `/var/log/messages` for messages from `kubelet`.
+If after several minutes, you still don't see any nodes, something may have done
+wrong with the registration process. SSH into a node group instance, look at the
+file `/var/log/cloud-init-output.log` to check that the `/etc/eks/bootstrap.sh`
+was invoked, and check the file `/var/log/messages` for messages from `kubelet`.
 
 If you see errors related to permissions, check you `aws-auth` config map. Even
 a small typo, or indentation error in the embedded yaml, can cause
@@ -389,9 +406,18 @@ TODO
 
 ## Metrics Server
 
-The [Metrics Server](https://github.com/kubernetes-sigs/metrics-server) is a core part of the [Kubernetes Monitoring Architecture](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/instrumentation/monitoring_architecture.md) but it is not installed by default on EKS clusters. It can be installed by checking its code from GitHub and following the instructions, or by following the instructions in the [Amazon EKS documentation](https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html). We will provide instructions to deploy it below.
+The [Metrics Server](https://github.com/kubernetes-sigs/metrics-server) is a
+core part of the
+[Kubernetes Monitoring Architecture](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/instrumentation/monitoring_architecture.md)
+but it is not installed by default on EKS clusters. It can be installed by
+checking its code from GitHub and following the instructions, or by following
+the instructions in the
+[Amazon EKS documentation](https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html).
+We will provide instructions to deploy it below.
 
-Before installing metrics-server, we will not be able to get node level or pod level aggregated metrics. For e.g.. the following two commands will give you errors:
+Before installing Metrics Server, we will not be able to get node level or pod
+level aggregated metrics. For e.g.. the following two commands will give you
+errors:
 
 ```
 kubectl top nodes
@@ -400,7 +426,8 @@ kubectl top pods
 
 ### Installing Metrics Server from GitHub Source
 
-We have added the metrics-server GitHub repo to our project as a sub-module, for convenience, at `external/metrics-server`. Go into that folder and run:
+We have added the Metrics Server GitHub repo to our project as a sub-module, for
+convenience, at `external/metrics-server`. Go into that folder and run:
 
 ```
 # In folder 'external/metrics-server'
@@ -421,7 +448,8 @@ clusterrole.rbac.authorization.k8s.io/system:metrics-server created
 clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
 ```
 
-The `metrics-server` system creates a service with the same name. You can check that the service exists:
+The Metrics Server deployment scripts create a service with the same name. You
+can check that the service exists:
 
 ```
 kubectl get svc metrics-server -n kube-system
@@ -429,9 +457,12 @@ NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)   AGE
 metrics-server   ClusterIP   172.20.189.208   <none>        443/TCP   9m54s
 ```
 
-You can get full details by appending the flag `-o yaml` to the above command. If you do so, you will observe that the service uses the selector `k8s-app: metrics-server` to find the matching pods.
+You can get full details by appending the flag `-o yaml` to the above command.
+If you do so, you will observe that the service uses the selector
+`k8s-app: metrics-server` to find the matching pods.
 
-You can check that the `metrics-server` deployment is running from the following command:
+You can check that the `metrics-server` deployment is running from the following
+command:
 ```
 kubectl get deployment metrics-server -n kube-system
 NAME             READY   UP-TO-DATE   AVAILABLE   AGE
@@ -445,7 +476,8 @@ with `k8s-app=metrics-server`, which matches the service selector above.
 
 ### Querying Resource Metrics
 
-Now that metrics-server is installed, we can query aggregated resource metrics, using, for e.g., the `kubectl top` command:
+Now that Metrics Server is installed, we can query aggregated resource metrics,
+using, for e.g., the `kubectl top` command:
 
 ```
 kubectl top nodes
@@ -461,7 +493,8 @@ ip-10-2-146-81.ec2.internal   31m          1%     369Mi           13%
 ip-10-2-94-162.ec2.internal   36m          1%     420Mi           14%
 ```
 
-We can query pod-level metrics, with the following command (in the following example, we are querying pods in the `kube-system` namespace):
+We can query pod-level metrics, with the following command (in the following
+example, we are querying pods in the `kube-system` namespace):
 
 ```
 kubectl top pods -n kube-system
@@ -701,6 +734,4 @@ Notice that the `wget` command could resolve the hostname `hello-svc`.
 
 # TODO
 
-- metrics server
-- kubernetes dashboard
 - prometheus
