@@ -225,6 +225,23 @@ NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
 kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   10m
 ```
 
+## Giving other users access to the EKS cluster
+
+When a cluster is created, the AWS IAM user or role that created the cluster is
+given `system:masters` permission on that cluster automatically by Amazon EKS.
+This is hidden and does not appear in the `aws-auth` Config Map (that we discuss
+below).
+
+If multiple users are collaborating on administering an EKS cluster, and they
+don't use the same AWS IAM user, group or role as the creator of the cluster,
+you will need to give them permissions to access the cluster explicitly. To do
+this, read this blog article:
+
+https://aws.amazon.com/premiumsupport/knowledge-center/amazon-eks-cluster-access/
+
+You may want to wait until the next section, where you will be creating the
+Config Map.
+
 ## NodeGroup IAM role
 
 We will create "worker nodes" or node groups below. Worker nodes are just EC2
@@ -534,6 +551,62 @@ and break your automation.
 
 It uses Metrics Server so you should already have that installed, as above.
 
+### Installing Kubernetes Dashboard
+
+> We have added the Kubernetes Dashboard repository to ours in the `external`
+> folder, using the command:
+> `git submodule add https://github.com/kubernetes/dashboard.git`
+
+To install, go into the `external/dashboard` folder, and run:
+
+```
+kubectl apply -f aio/deploy/recommended.yaml
+```
+
+The output will be something like:
+
+```
+namespace/kubernetes-dashboard created
+serviceaccount/kubernetes-dashboard created
+service/kubernetes-dashboard created
+secret/kubernetes-dashboard-certs created
+secret/kubernetes-dashboard-csrf created
+secret/kubernetes-dashboard-key-holder created
+configmap/kubernetes-dashboard-settings created
+role.rbac.authorization.k8s.io/kubernetes-dashboard created
+clusterrole.rbac.authorization.k8s.io/kubernetes-dashboard created
+rolebinding.rbac.authorization.k8s.io/kubernetes-dashboard created
+clusterrolebinding.rbac.authorization.k8s.io/kubernetes-dashboard created
+deployment.apps/kubernetes-dashboard created
+service/dashboard-metrics-scraper created
+deployment.apps/dashboard-metrics-scraper created
+```
+
+### Viewing the Dashboard
+
+To access the Dashboard from your a given machine, you must create a secure
+channel to your Kubernetes cluster. The easiest way is to run the following
+command on the machine from which you want to browse the Dashboard UI:
+
+```
+kubectl proxy
+```
+
+Now you should be able to browse the UI at:
+
+http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/.
+
+**Note**: For this to work, on the machine where you want to access the
+Dashboard from, ensure:
+
+- You have AWS IAM permissions to access the Kubernetes cluster;
+- You have set KUBECONFIG environment variable to point to the kubeconfig file
+  of this cluster;
+
+This should already be setup on the workstation you were using to setup EKS so
+far. For other machines, ensure that your AWS CLI is configured with the
+required IAM permissions to at least have read-only access to the cluster, and
+that KUBECONFIG has been setup as described in the "EKS Cluster" section above.
 
 # Managing K8S objects via Terraform
 

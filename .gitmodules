@@ -1,3 +1,6 @@
 [submodule "external/metrics-server"]
 	path = external/metrics-server
 	url = https://github.com/kubernetes-sigs/metrics-server
+[submodule "external/dashboard"]
+	path = external/dashboard
+	url = https://github.com/kubernetes/dashboard.git
