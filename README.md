@@ -225,23 +225,6 @@ NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
 kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   10m
 ```
 
-## Giving other users access to the EKS cluster
-
-When a cluster is created, the AWS IAM user or role that created the cluster is
-given `system:masters` permission on that cluster automatically by Amazon EKS.
-This is hidden and does not appear in the `aws-auth` Config Map (that we discuss
-below).
-
-If multiple users are collaborating on administering an EKS cluster, and they
-don't use the same AWS IAM user, group or role as the creator of the cluster,
-you will need to give them permissions to access the cluster explicitly. To do
-this, read this blog article:
-
-https://aws.amazon.com/premiumsupport/knowledge-center/amazon-eks-cluster-access/
-
-You may want to wait until the next section, where you will be creating the
-Config Map.
-
 ## NodeGroup IAM role
 
 We will create "worker nodes" or node groups below. Worker nodes are just EC2
@@ -343,6 +326,19 @@ metadata:
 [Managing Users or IAM Roles for your Cluster](add-user-role).
 
 [add-user-role]: https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html
+
+### Giving other users access to the EKS cluster
+
+When a cluster is created, the AWS IAM user or role that created the cluster is
+given `system:masters` permission on that cluster automatically by Amazon EKS.
+This is hidden and does not appear in the `aws-auth` Config Map (that we discuss
+below).
+
+If other users are collaborating on administering an EKS cluster, and they don't
+use the same AWS IAM user or role as the creator of the cluster, you will need
+to give them permissions to access the cluster explicitly. This is also done via
+the Config Map. For more details, read this
+[article](https://aws.amazon.com/premiumsupport/knowledge-center/amazon-eks-cluster-access/).
 
 ## Node Groups
 
@@ -594,19 +590,55 @@ kubectl proxy
 
 Now you should be able to browse the UI at:
 
-http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/.
+`http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/`.
 
-**Note**: For this to work, on the machine where you want to access the
-Dashboard from, ensure:
+The UI will ask you to login and offer two methods. The first, `KubeConfig`,
+does not work on Amazon EKS. You need to use the `Token` login method. See the
+next section for how to obtain Tokens.
 
-- You have AWS IAM permissions to access the Kubernetes cluster;
-- You have set KUBECONFIG environment variable to point to the kubeconfig file
-  of this cluster;
+### Permissions for Kubernetes Dashboard
 
-This should already be setup on the workstation you were using to setup EKS so
-far. For other machines, ensure that your AWS CLI is configured with the
-required IAM permissions to at least have read-only access to the cluster, and
-that KUBECONFIG has been setup as described in the "EKS Cluster" section above.
+The UI app that is deployed has very limited permissions. It assumes the
+permissions of the logged in users to retrieve data and perform actions.
+
+The UI allows you to login using a "Token" (the other method, named
+`Kubeconfig`, does not work with Amazon EKS). Tokens are stored in Kubernetes
+Secret objects that are automatically created when a Kubernetes Service Account
+API object is created, and give the user/code posessing the token the same
+permissions that the Service Account has. The UI deployment created a Service
+Account `kubernetes-dashboard/kubernetes-dashboard`. We can get it's token like
+this:
+
+```
+kubectl -n kubernetes-dashboard describe secret $(kubectl -n kubernetes-dashboard get secret | grep kubernetes-dashboard | awk '{print $1}') | grep '^token:' | awk '{print $2}'
+```
+
+If you login with the token obtained above, you will be able to click around but
+not see any data, as this service account has very limited permissions.
+
+**Creating Admin and View Service Accounts**
+
+To create some service accounts, go into the `06-users` folder and run:
+
+```
+kubectl apply -f .
+```
+
+This will create two service accounts in the `kube-system` namespace:
+
+1. `eks-admin` bound to the `cluster-admin` Cluster Role
+2. `eks-view` bound to the `view` Cluster Role
+
+You can get the token for each via:
+
+```
+ROLE_NAME=eks-admin # or eks-view
+kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | grep "${ROLE_NAME}" | awk '{print $1}') | grep '^token:' | awk '{print $2}'
+```
+
+If you login with the `eks-admin` token, you will be able to see all the details
+of the cluster. If you login with the `eks-view` token, you will see a subset of
+the details.
 
 # Managing K8S objects via Terraform
 
@@ -615,7 +647,9 @@ their clusters. However, we'd like to use a single system - Terraform - to
 manage our environment as much as possible. The
 [Terraform Kubernetes Provider][tf-k8s] can help.
 
-To try this, go into the `10-tf-k8s-test` folder, edit the `variables.auto.tfvars` file with appropriate values (the names are self-explanatory), and run:
+To try this, go into the `10-tf-k8s-test` folder, edit the
+`variables.auto.tfvars` file with appropriate values (the names are
+self-explanatory), and run:
 
 ```
 $ terraform init # if not done before
