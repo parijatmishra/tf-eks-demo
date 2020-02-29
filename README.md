@@ -885,6 +885,29 @@ The prompt ("`/ #`") above is the busybox shell prompt. Now we can try reaching 
 We can see that we were able to connect to the nginx web server and download
 it's default index HTML file.
 
+After testing, quit the busybox shell by typing `exit`.
+
+```
+/ # exit
+Session ended, resume using 'kubectl attach shell-79b767dbb9-9gqjw -c shell -i -t' command when the pod is running
+```
+
+### Cleanup the shell pod
+
+This also shows you that the busybox container continues to run after you exit it. This behaviour is different from running a pod with `docker run -it ...` command. This is becasue the `kubectl run` command creates a deployment:
+
+```
+kubectl get deployment shell -n test
+NAME    READY   UP-TO-DATE   AVAILABLE   AGE
+shell   1/1     1            1           15m
+```
+
+This will keep the container/pod running, and will recreate it if you terminate the pod manually. To get rid of the pod if you no longer need it, delete the deployment instead:
+
+```
+kubectl delete deployment shell -n test
+```
+
 ## Terraform: ClusterIP Service
 
 We can create a K8S `ClusterIP` service to expose our deployment pods to other pods within the cluster.  The pods will not be accessible from outside our VPC or even from outside our cluster.
@@ -935,7 +958,15 @@ hello-svc-6d9df7cc6c-cq5h4   1/1     Running   0          17m   10.2.138.193   i
 
 Notice that the pods' IP addresses are reflected in the service's `Endpoints` object.
 
-Pods inside the cluster can access the service at port `8080` using the automatically registered DNS name `hello-svc`. To test this, we first launch a "shell" container in the cluster in the same namespace `test`:
+Pods inside the cluster can access the service at port `8080` using the automatically registered DNS name `hello-svc`.
+
+If you had launched the shell container in the previous section and left it
+running, you can connect back to it. Use `kubectl get pod -n test` to get the
+list of pods and find the full name of the shell pod, and then use `kubectl
+attach <pod-name> -c shell -i -t` command to get back into it.
+
+Otherwise, launch a new "shell" container in the cluster in the same namespace
+`test`:
 
 ```
 $ kubectl run -it shell --image=busybox /bin/sh -n test
@@ -962,6 +993,8 @@ itself, but notice that the `wget` command could resolve the hostname
 about all services running on the cluster and creates DNS hostnames our of
 service names. This shows how code running within a server can access other pods
 exposed as an internal service.
+
+Don't forget to cleanup the shell pod when you are done with it.
 
 # TODO
 
