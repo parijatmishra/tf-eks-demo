@@ -748,17 +748,17 @@ $ terraform apply
 
 What follows an explanation of what this module does.
 
-### Configuring the Kubernetes Provider
+## Terraform Kubernetes Provider
 
 The `kubernetes` provider is configured in the file `settings.tf`. Here, we just
 need to ensure the environment variable `KUBECONFIG` is pointing to the
 kubeconfig file we generated above.
 
-### Creating a namespace
+## Terraform: Kubernetes Namespaces
 
 The file `01-namespace.tf` shows how to create a new namespace named `test`.
 
-### Managing a pod
+## Terraform: Kubernetes Pods
 
 The file `02-pod.tf` creates a pod named `hello-pod` in the `test` namespace,
 with label `app=hello-pod`. You can check that the pod is running by:
@@ -808,7 +808,7 @@ nginx version: nginx/1.17.6
 ...
 ```
 
-### Managing a Deployment
+## Terraform: Kubernetes Deployments
 
 The file `03-deployment.tf` creates a Deployment named `hello-dep` in the `test` namespace, running 3 replicas of a pod very similar to the previous one, labeled with `app=hello-pod-dep` (note that the app label is diffrent from the deployment label). You can check the the deployment and pods are running, like this:
 
@@ -857,7 +857,11 @@ hello-dep-5d4499db45-hklb8   1/1     Running   0          3h2m   10.2.65.237    
 hello-dep-5d4499db45-ktpnm   1/1     Running   0          3h2m   10.2.109.172   ip-10-2-102-225.ec2.internal   <none>           <none>
 ```
 
-### Managing a Service: Cluster-Internal
+Each of the pods is running on a different node. If we killed a pod using
+`kubectl` or the Kubernetes Dashboard UI, Kubernetes would automatically create
+a replacement pod, providing resiliency.
+
+## Terraform: ClusterIP Service
 
 We can create a K8S `ClusterIP` service to expose our deployment pods to other pods within the cluster.  The pods will not be accessible from outside our VPC or even from outside our cluster.
 
@@ -914,38 +918,26 @@ $ kubectl run -it shell --image=busybox /bin/sh -n test
 / #
 ```
 
-Our pod is running an `nginx` web server in its default config. We can try accessing the index page:
+We will land into a shell on this container. Since this container is running
+**within** the cluster, from here we can make HTTP/TCP connections to services
+internal to the cluster (like the one we just launched).
+
+Our service is a load balanced HTTP service. Each pod in our service is composed of a single container, which is running the `nginx` web server in its default config. We can make an HTTP request to our service (which will forward the request to an arbitrary pod):
 
 ```
 / # wget -qO - http://hello-svc:8080/
 <!DOCTYPE html>
 <html>
-<head>
-<title>Welcome to nginx!</title>
-<style>
-    body {
-        width: 35em;
-        margin: 0 auto;
-        font-family: Tahoma, Verdana, Arial, sans-serif;
-    }
-</style>
-</head>
-<body>
-<h1>Welcome to nginx!</h1>
-<p>If you see this page, the nginx web server is successfully installed and
-working. Further configuration is required.</p>
-
-<p>For online documentation and support please refer to
-<a href="http://nginx.org/">nginx.org</a>.<br/>
-Commercial support is available at
-<a href="http://nginx.com/">nginx.com</a>.</p>
-
-<p><em>Thank you for using nginx.</em></p>
-</body>
+...
 </html>
 ```
 
-Notice that the `wget` command could resolve the hostname `hello-svc`.
+We will get back the nginx's default index page. This is not interesting by
+itself, but notice that the `wget` command could resolve the hostname
+`hello-svc` from the cluster's internal DNS service, which automatically knows
+about all services running on the cluster and creates DNS hostnames our of
+service names. This shows how code running within a server can access other pods
+exposed as an internal service.
 
 # TODO
 
