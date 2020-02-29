@@ -5,18 +5,27 @@ services, via Terraform.
 
 # Pre-requisites
 
-You will need:
+You will need an AWS account with Administrative level access to follow this
+tutorial.
+
+You will need the following software installed on the workstation you are
+following the guide from:
 
 - The `git` CLI
-- the [Terraform CLI](https://www.terraform.io/downloads.html) installed'
-- an AWS account you have access to;
-- the [AWS CLI](https://aws.amazon.com/cli/) installed and configured to access the account.
+- The [Terraform CLI](https://www.terraform.io/downloads.html)
+- The [AWS CLI](https://aws.amazon.com/cli/) installed and configured to access the account.
+- The [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/) CLI
+- The [helm](https://helm.sh/) CLI (optional; only needed for some parts)
+
+## Configuring the AWS region for Terraform
 
 In each of the folders, there is a file `XXX-settings.tf`. Edit it to reflect
 the AWS region you want to use.
 
 You will need to give Terraform
 [access to AWS credentials](https://www.terraform.io/docs/providers/aws/index.html).
+
+## Git sub-modules
 
 This repo refers to other repos using git submodules. You will need to
 initialize them with the following commands:
@@ -26,7 +35,7 @@ git submodule init
 git submidule update
 ```
 
-## VPC
+# VPC
 
 Before we can create an EKS cluster, we need a VPC. Amazon EKS has
 [some requirements](eks-vpc) and suggestion for the design of the VPC.
@@ -640,6 +649,85 @@ If you login with the `eks-admin` token, you will be able to see all the details
 of the cluster. If you login with the `eks-view` token, you will see a subset of
 the details.
 
+## Prometheus
+
+[Prometheus](https://prometheus.io/) is a general purpose time series database
+and metrics server, allowing you to filter, graph, and query the results. It can
+natively monitor Kubernetes, its nodes and itself, as Kubernetes metrics API
+exposes metrics in the Prometheus format. Prometheus can be deployed as a
+Kubernetes service, and it is especially easy using the Helm tool, which
+provides a [Helm Chart for
+Prometheus](https://hub.helm.sh/charts/stable/prometheus).
+
+If you read the chart documentation, you will see a large number of
+configuration variables that can be tweaked. For our demo purposes, we need to
+take of only two.
+
+## Deploying Prometheus using Helm
+
+First, create a dedicated namespace for Prometheus resources:
+
+```
+kubectl create namespace prometheus
+```
+
+Ensure that you have added the "stable" repo to Helm:
+
+```
+$ helm repo list
+NAME  	URL
+stable	https://kubernetes-charts.storage.googleapis.com/
+```
+
+If you don't see the `stable` repo in the output of the previous command, add it:
+
+```
+helm repo add stable https://kubernetes-charts.storage.googleapis.com/
+```
+
+Now, deploy Prometheus from the `prometheus` chart in the `stable` repository,
+passing two configuration variables (the argument to `--set` flag):
+
+```
+helm install prometheus stable/prometheus \
+    --namespace prometheus \
+    --set alertmanager.persistentVolume.storageClass="gp2",server.persistentVolume.storageClass="gp2"
+```
+
+Verify that all the pods are running:
+
+```
+kubectl get pods -n prometheus
+```
+
+which should give output like this:
+
+```
+NAME                                             READY   STATUS    RESTARTS   AGE
+prometheus-alertmanager-fd5df4f8c-gsrxl          2/2     Running   0          59m
+prometheus-kube-state-metrics-69bfcf45dd-vrttl   1/1     Running   0          59m
+prometheus-node-exporter-2s42w                   1/1     Running   0          59m
+prometheus-node-exporter-fg5jx                   1/1     Running   0          59m
+prometheus-node-exporter-lhsqg                   1/1     Running   0          59m
+prometheus-pushgateway-5746f45dd-6hx8x           1/1     Running   0          59m
+prometheus-server-6f5ff4f64b-kc8xn               2/2     Running   0          59m
+```
+
+### Viewing the Prometheus UI
+
+The Prometheus server in its current configuration is available on a URL
+internal to the Kubernetes cluster, for security, as it does not have any
+authentication. To reach it, use `kubectl` to port forward the console to your
+local machine:
+
+```
+kubectl --namespace=prometheus port-forward deploy/prometheus-server 9090
+```
+
+Now you can browse the Prometheus UI on http://localhost:9090/.  To test that it
+is working, choose a metric from the "- insert metric at cursor" menu, then
+choose Execute. Choose the Graph tab to show the metric over time.
+
 # Managing K8S objects via Terraform
 
 Most people use `kubectl` and Kubernetes YAML files to declaratively manage
@@ -861,4 +949,3 @@ Notice that the `wget` command could resolve the hostname `hello-svc`.
 
 # TODO
 
-- prometheus
