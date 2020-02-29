@@ -851,15 +851,39 @@ kubectl get pods -n test -l app=hello-dep-pod -o wide
 The output should be similar to:
 
 ```
-NAME                         READY   STATUS    RESTARTS   AGE    IP             NODE                           NOMINATED NODE   READINESS GATES
-hello-dep-5d4499db45-fxr44   1/1     Running   0          3h2m   10.2.142.50    ip-10-2-153-187.ec2.internal   <none>           <none>
-hello-dep-5d4499db45-hklb8   1/1     Running   0          3h2m   10.2.65.237    ip-10-2-82-164.ec2.internal    <none>           <none>
-hello-dep-5d4499db45-ktpnm   1/1     Running   0          3h2m   10.2.109.172   ip-10-2-102-225.ec2.internal   <none>           <none>
+NAME                         READY   STATUS    RESTARTS   AGE   IP            NODE                          NOMINATED NODE   READINESS GATES
+hello-dep-5d4499db45-fqxcp   1/1     Running   0          3h    10.2.135.27   ip-10-2-146-81.ec2.internal   <none>           <none>
+hello-dep-5d4499db45-vxtb5   1/1     Running   0          58d   10.2.119.66   ip-10-2-101-75.ec2.internal   <none>           <none>
+hello-dep-5d4499db45-zt5lv   1/1     Running   0          58d   10.2.90.87    ip-10-2-94-162.ec2.internal   <none>           <none>
 ```
 
 Each of the pods is running on a different node. If we killed a pod using
 `kubectl` or the Kubernetes Dashboard UI, Kubernetes would automatically create
 a replacement pod, providing resiliency.
+
+Each pod has an IP. Each pod is composed of a single `nginx` container which we obtained from [Docker Hub nginx repository](https://hub.docker.com/_/nginx). If you examine the container's [Dockerfile](https://github.com/nginxinc/docker-nginx/blob/5971de30c487356d5d2a2e1a79e02b2612f9a72f/mainline/buster/Dockerfile) you will notice (near the bottom) the `EXPOSE 80` directive, which means that this container by default will accept connections on port 80. We can actually connect to port 80 on any of the above pods IP addresses. But we can initiate these connections only from within the cluster; the IPs are not accessible from ourside the cluster, even in the same VPC.
+
+To test this, we first launch a "shell" container in the cluster in the same namespace `test`:
+
+```
+$ kubectl run -it shell --image=busybox /bin/sh -n test
+/ #
+```
+
+The prompt ("`/ #`") above is the busybox shell prompt. Now we can try reaching one of the pod's port 80 via its IP address (the IP address )
+
+```
+/ # wget -qO - http://10.2.135.27:80/
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+...
+</html>
+```
+
+We can see that we were able to connect to the nginx web server and download
+it's default index HTML file.
 
 ## Terraform: ClusterIP Service
 
