@@ -1115,3 +1115,21 @@ balancer external. We will leave this out.
 
 # TODO
 
+- Kubernetes service ALB Ingress Controller
+- Multiple Kubernetes services with NGINX ingress controller behind NLB
+- HTTPS services: ALB ingress controller
+- HTTPS services: NGINX ingress controller
+- Auto scaling
+- Managed Node Groups
+- Fargate Profiles
+- Spot Workers
+- Observability:
+  - Logging
+  - Metrics
+  - Tracing
+- Service Mesh: App Mesh
+- Security
+  - Pod Security Policy
+  - Calico
+  - Open Policy Agent
+- Persistent Volumes
