@@ -908,7 +908,7 @@ This will keep the container/pod running, and will recreate it if you terminate 
 kubectl delete deployment shell -n test
 ```
 
-## Terraform: ClusterIP Service
+## Terraform: Kebernetes Service - ClusterIP
 
 We can create a K8S `ClusterIP` service to expose our deployment pods to other pods within the cluster.  The pods will not be accessible from outside our VPC or even from outside our cluster.
 
