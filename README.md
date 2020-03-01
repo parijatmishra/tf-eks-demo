@@ -1053,5 +1053,61 @@ For all LBs, one must create an LB per service.
 
 An alternative to having a load balancer per service is to combine [NGINX ingress with NLB](https://aws.amazon.com/blogs/opensource/network-load-balancer-nginx-ingress-controller-eks/).
 
+## Terraform: Kubernetes Service - LoadBalancer - Internal NLB
+
+We will expose a service outside our cluster, but still within our VPC (that is,
+it will not be accessible from the internet) using a Service of type
+`LoadBalancer` with annotations to create an internal NLB. We need to make some
+changes to the `kubernetes_service` resource compared to a `ClusterIP` service.
+
+The file `05-service-int-nlb.tf` shows how to do this. It is nearly identical to the file `04-service-clusterip.tf`. The differences are:
+
+* We changed the Terraform resource names, Kubernetes resource names, and labels from "hello-svc" to "hello-int-nlb" so we can distinguish the resources for each; this is just a cosmetic change and does not affect functionality.
+* We changed the service `type` parameter from `ClusterIP` to `LoadBalancer`.
+* We added two annotations in the metadata to tell Kubernetes to create an NLB and keep it internal.
+* We remove the `session_affinity` parameter as NLB does not support it; we could alternatively have changed its value to `None`.
+* We changed the port number of the service from `8080` to `80`; there is no specific need to do this, but we felt that since the service will be available from a load balancer, it would be simpler to let clients access it on the default HTTP port.
+
+Once this is deployed, you should see a Network Load Balancer has been created
+in the VPC, in the subnets which are tagged with the tag
+`kubernetes.io/role/internal-elb=1`. We previously tagged all our private
+subnets with this tag. If you have more private subnets, but did not tag them
+like this, the Kubernetes created NLB will not use them.
+
+To find out the name of the Load Balancer, run:
+
+```
+$ kubectl get svc hello-int-nlb -n test
+NAME            TYPE           CLUSTER-IP     EXTERNAL-IP                                                                     PORT(S)        AGE
+hello-int-nlb   LoadBalancer   172.20.72.29   a883bd9cd5ae011eabfef022f9d53cc8-9e01e2ed32f31472.elb.us-east-1.amazonaws.com   80:31273/TCP   18h
+```
+
+The output shows the DNS name of the load balancer in the "EXTERNAL-IP" column. It also shows that TCP port 80 on the load balancer/service is bound to port 31273 (your port may be different) on our nodes. Is this port correct? We never specified this port.
+
+
+If we run the command:
+
+```
+kubectl get service hello-int-nlb -n test -o yaml
+```
+
+The output will have a line `nodePort: 31273` showing that the Kubernetes
+allocated this port for this service. (The output will also have a field
+`status.loadBalancer.ingress[].hostname` confirming the load balancer's DNS
+name.)
+
+We can now login to our bastion host and access our service from it. The bastion
+is within the VPC and can access private subnets and our internal load balancer.
+
+```
+[ec2-user@ip-10-2-0-48 ~]$ wget -qO - http://a883bd9cd5ae011eabfef022f9d53cc8-9e01e2ed32f31472.elb.us-east-1.amazonaws.com/
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+...
+</html>
+```
+
 # TODO
 
