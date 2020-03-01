@@ -908,9 +908,9 @@ This will keep the container/pod running, and will recreate it if you terminate 
 kubectl delete deployment shell -n test
 ```
 
-## Terraform: Kebernetes Service - ClusterIP
+## Terraform: Kubernetes Service - ClusterIP
 
-We can create a K8S `ClusterIP` service to expose our deployment pods to other pods within the cluster.  The pods will not be accessible from outside our VPC or even from outside our cluster.
+We can create a Kubernetes `ClusterIP` service to expose our deployment pods to other pods within the cluster.  The pods will not be accessible from outside our VPC or even from outside our cluster.
 
 The file `04-service-clusterip.tf` shows how to create a deployment of pods, and map a service to it. While the containers of the pods listen on port `80`, the service listens on a cluster internal IP at port `8080`. The service, deployment and the pods all have a label `app=hello-svc`. The service has been configured to look for pods with the label `app=hello-svc`. You can check that the service, deployment and pods are up:
 
@@ -995,6 +995,63 @@ service names. This shows how code running within a server can access other pods
 exposed as an internal service.
 
 Don't forget to cleanup the shell pod when you are done with it.
+
+## Aside: Exposing Kubernetes Services Outside the Cluster
+
+In the previous sections, our pods, deployments and services were only
+accessible from within the cluster. To access them from outside, we used `kubectl` proxying or port-forwarding, which is only suitable for administration tasks.
+
+To expose a service to clients (other services, web browsers etc) outside the cluster, Kubernetes has three constructs:
+
+* A service of type
+  [NodePort](https://kubernetes.io/docs/concepts/services-networking/service/#nodeport),
+  that assigns the service a static port on each node's IP address. If the
+  node's IP is routable, the service can be accessed from outside the cluster.
+  This supports services using TCP and UDP protocols.
+* A service of type
+  [LoadBalancer](https://kubernetes.io/docs/concepts/services-networking/service/#loadbalancer),
+  on cloud providers that support external load balancers. This supports
+  whatever protocols the load balancer supports. On AWS, the following types are
+  available:
+  * By default, a service with type `LoadBalancer` will cause a Classic aka
+    Elastic Load Balancer (ELB) to be created. This supports services using the TCP but not UDP protocol. Some features of the ELB related to HTTP can be configured using annotations.
+  * A service of type `LoadBalancer` with an annotation
+    `service.beta.kubernetes.io/aws-load-balancer-type: nlb` will cause a
+    Network Load Balancer to be created. This supports services using TCP and
+    UDP protocols.
+  * By default, the load balancer will be public. To create a private load
+    balancer instead, the service should be annotated with
+    `service.beta.kubernetes.io/aws-load-balancer-internal: 0.0.0.0/0` (or instead of using the wildcard IP address, one can use "true").
+  * Some aspects of the load balancer being created can be customized via more annotations. See the link above.
+* An
+  [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/#what-is-ingress)
+  resource. An Ingress resource is an absract concept that can be implemented
+  using a variety of technologies, depending on the Kubernetes deployment. This
+  requires deploying an [Ingress
+  Controller](https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/)
+  of the appropriate type first. On AWS, the [ALB Ingress
+  Controller](https://github.com/kubernetes-sigs/aws-alb-ingress-controller) is
+  available.
+
+In our case, we do not want to make our worker nodes have public IPs because it
+potentially exposes everything on them, not just our service. So `NodePort`
+service types are out of the question.
+
+`LoadBalancer` service:
+  * The Classic ELB is well supported with EKS. It can not only serve TCP based
+    traffic, for for HTTP(S) traffic it can do SSL termination. It cannot do
+    path based routing. It won't work with Fargate services.
+  * The NLB scales better than the CLB. It does not do SSL/TLS termination with
+    EKS today, so that needs to be done in the backend. It also does not
+    understand HTTP and cannot do path based routing. It won't work with Fargate
+    services.
+
+`Ingress`: The ALB only works for HTTP. It can do path based routing but that is
+not yet supported with EKS. It will work with Fargate services.
+
+For all LBs, one must create an LB per service.
+
+An alternative to having a load balancer per service is to combine [NGINX ingress with NLB](https://aws.amazon.com/blogs/opensource/network-load-balancer-nginx-ingress-controller-eks/).
 
 # TODO
 
