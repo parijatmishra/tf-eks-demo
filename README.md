@@ -1109,5 +1109,9 @@ is within the VPC and can access private subnets and our internal load balancer.
 </html>
 ```
 
+By removing the annotation
+`service.beta.kubernetes.io/aws-load-balancer-internal` we can make our load
+balancer external. We will leave this out.
+
 # TODO
 
