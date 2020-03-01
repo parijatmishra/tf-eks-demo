@@ -5,7 +5,7 @@ default_tags = {
   /* Tag VPC and subnets with "kubernetes.io/cluster/<cluster-name>=shared"
    * for *each* cluster you plan to launch in this VPC.
    */
-  "kubernetes.io/cluster/EksClusterTf" = "shared"
+  "kubernetes.io/cluster/TfEksDemo" = "shared"
 }
 
 azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
