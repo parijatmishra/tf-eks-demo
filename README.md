@@ -1087,13 +1087,21 @@ it will not be accessible from the internet) using a Service of type
 `LoadBalancer` with annotations to create an internal NLB. We need to make some
 changes to the `kubernetes_service` resource compared to a `ClusterIP` service.
 
-The file `05-service-int-nlb.tf` shows how to do this. It is nearly identical to the file `04-service-clusterip.tf`. The differences are:
+The file `05-service-int-nlb.tf` shows how to do this. It is nearly identical to
+the file `04-service-clusterip.tf`. The differences are:
 
-* We changed the Terraform resource names, Kubernetes resource names, and labels from "hello-svc" to "hello-int-nlb" so we can distinguish the resources for each; this is just a cosmetic change and does not affect functionality.
+* We changed the Terraform resource names, Kubernetes resource names, and labels
+  from "hello-svc" to "hello-int-nlb" so we can distinguish the resources for
+  each; this is just a cosmetic change and does not affect functionality.
 * We changed the service `type` parameter from `ClusterIP` to `LoadBalancer`.
-* We added two annotations in the metadata to tell Kubernetes to create an NLB and keep it internal.
-* We remove the `session_affinity` parameter as NLB does not support it; we could alternatively have changed its value to `None`.
-* We changed the port number of the service from `8080` to `80`; there is no specific need to do this, but we felt that since the service will be available from a load balancer, it would be simpler to let clients access it on the default HTTP port.
+* We added two annotations in the metadata to tell Kubernetes to create an NLB
+  and keep it internal.
+* We remove the `session_affinity` parameter as NLB does not support it; we
+  could alternatively have changed its value to `None`.
+* We changed the port number of the service from `8080` to `80`; there is no
+  specific need to do this, but we felt that since the service will be available
+  from a load balancer, it would be simpler to let clients access it on the
+  default HTTP port.
 
 Once this is deployed, you should see a Network Load Balancer has been created
 in the VPC, in the subnets which are tagged with the tag
@@ -1109,7 +1117,10 @@ NAME            TYPE           CLUSTER-IP     EXTERNAL-IP                       
 hello-int-nlb   LoadBalancer   172.20.72.29   a883bd9cd5ae011eabfef022f9d53cc8-9e01e2ed32f31472.elb.us-east-1.amazonaws.com   80:31273/TCP   18h
 ```
 
-The output shows the DNS name of the load balancer in the "EXTERNAL-IP" column. It also shows that TCP port 80 on the load balancer/service is bound to port 31273 (your port may be different) on our nodes. Is this port correct? We never specified this port.
+The output shows the DNS name of the load balancer in the "EXTERNAL-IP" column.
+It also shows that TCP port 80 on the load balancer/service is bound to port
+31273 (your port may be different) on our nodes. Is this port correct? We never
+specified this port.
 
 
 If we run the command:
