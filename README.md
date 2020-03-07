@@ -3,6 +3,11 @@
 A demo of how to manage an Amazon EKS cluster, node groups, and Kubernetes
 services, via Terraform.
 
+[Kubernetes Service Account]: https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/
+[IAM Role for Service Account]: https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
+[Kubernetes Controller]: https://kubernetes.io/docs/concepts/architecture/controller/
+[Kubernetes Pod]: https://kubernetes.io/docs/concepts/workloads/pods/pod/
+[Kubernetes Deployment]: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
 [Kubernetes Service]: https://kubernetes.io/docs/concepts/services-networking/service/
 [Kubernetes: Publishing Services]: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
 [NodePort Service]: https://kubernetes.io/docs/concepts/services-networking/service/#nodeport
@@ -740,6 +745,104 @@ Now you can browse the Prometheus UI on http://localhost:9090/.  To test that it
 is working, choose a metric from the "- insert metric at cursor" menu, then
 choose Execute. Choose the Graph tab to show the metric over time.
 
+
+## Terraform - ALB Ingress Controller
+
+In a later section, we will create a Kubernetes service exposed outside the
+cluster through an AWS [Application Load Balancer]. To get Kubernetes to
+provision an ALB and register pods or nodes with it, we have to use the concept
+of an Kubernetes [Ingress] resource. For the Ingress resource to actually be
+able to spin up an ALB and configure it, we must have an [Ingress Controller]
+specific to AWS ALBs; in our case, this would be the [ALB Ingress Controller].
+
+### AWS IAM Integration with Kubernetes
+
+One of the things special about this controller is that it needs to make calls
+to AWS APIs to create and configure ALBs on your behalf and therefore needs AWS
+IAM credentials. On Amazon EKS the best practice is to create a [Kubernetes
+Service Account] for this controller and use an [IAM Role for Service Account]
+with it. For IAM integration with Kubernetes to work, the cluster must have an
+OpenID Connect (OIDC) Issuer URL. This should already be enabled for clusters
+created with Kubernetes version 1.14 and higher.
+
+See the [IAM Role for Service Account] documentation on how to test for this and
+enable it if necessary.  This cannot be done easily via Terraform.
+
+### Installing the ALB Ingress Controller
+
+The ALB Ingress Controller is a [Kubernetes Controller] that runs as a
+[Kubernetes Deployment] on the worker nodes. In this sense, it is like one of
+the Deployments we have seen earlier.
+
+Instructions for installing it are available in a number of places:
+* The AWS ALB Ingress Controller site:
+  https://kubernetes-sigs.github.io/aws-alb-ingress-controller/
+* The Amazon EKS documentation:
+  https://docs.aws.amazon.com/eks/latest/userguide/alb-ingress.html
+
+These guides show how to install the controller via command line tools and
+Kubernetes manifests. In this section, we will install the ALB Ingress
+Controller entirely via Terraform. We will be adapting the example deployment
+manifests in the ALB Ingress Controller source code at:
+https://github.com/kubernetes-sigs/aws-alb-ingress-controller/tree/master/docs/examples
+
+The code to deploy the ALB Ingress Controller is in the folder
+`07-alb-ingress-controller`. To deploy it:
+
+```
+$ terraform init # only need to do this once
+$ terraform apply
+```
+
+Explanation of the code follows below.
+
+### Service Account and IAM Role for ALB Ingress Controller
+
+The file `03-alb-ingress-controller-rbac.tf`:
+
+* Creates an AWS IAM Policy with the policy statement copied from:
+  https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/master/docs/examples/iam-policy.json
+* Creates an AWS IAM Role, with a somewhat unusual trust policy as described in
+  Amazon EKS documentation for creating IAM roles for Amazon EKS service
+  accounts:
+  https://docs.aws.amazon.com/eks/latest/userguide/create-service-account-iam-policy-and-role.html#create-service-account-iam-role
+* Attaches the AWS IAM Policy to the AWS IAM Role
+* Creates some Kubernetes resources as described in the Kubernetes manifest at:
+  https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/master/docs/examples/rbac-role.yaml
+  * Creates a Kubernetes Service Account; there is a special annotation to let
+    Amazon EKS associate the Service Account with the IAM role created above.
+    This is described at:
+    https://docs.aws.amazon.com/eks/latest/userguide/specify-service-account-role.html
+  * Creates a Kubernetes ClusterRole and gives it some permission to Kubernetes
+    APIs
+  * Binds the Service Account to the ClusterRole via a ClusterRoleBinding
+
+### The ALB Ingress Controller - Deployment
+
+The file `04-alb-ingress-controller-deployment.tf` deploys the actual controller
+as Deployment. It is a straightforward transalation into Terraform of the
+Kubernetes manifest at
+https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/master/docs/examples/alb-ingress-controller.yaml. We have made a couple of customizations:
+
+* We have specified an explicit dependency on the Service Account Resource, so
+  that we don't create the deployment before the service account has been
+  created. This was necessary because in the body of the deployment, there is no
+  Terraform expression that depends on the service account and Terraform cannot
+  figure out this dependency automatically.
+* We explicitly specified the
+  `spec.template.spec.automount_service_account_token` property and set it to
+  `true`. See [comment on issue #678 for
+  terraform-kubernetes-provider](https://github.com/terraform-providers/terraform-provider-kubernetes/issues/678#issuecomment-552956423).
+* The "strategy" of the Deployment is `Recreate` (killing the existing one
+  before creating a new one) instead of the default strategy of `RollingUpdate`
+  (create a new pod before killing the existing one); we never want more than
+  one controller pod running, even for a short duration, because they may both
+  end up intercepting a command to create an Ingress resource and we may have
+  two ALBs created.
+* We have specified the "--cluster-name" argument, so that when this ingress
+  controller creates resources, it uses the cluster name as part of their name,
+  providing distinction between resources between different clusters.
+
 # Managing K8S objects via Terraform
 
 Most people use `kubectl` and Kubernetes YAML files to declaratively manage
@@ -1151,16 +1254,8 @@ By removing the annotation
 `service.beta.kubernetes.io/aws-load-balancer-internal` we can make our load
 balancer external. We will leave this out.
 
-## Terraform - ALB Ingress Controller
+## TODO: Terraform: Kubernetes Service - NodePort - External ALB
 
-Instead of NLB, we can use an [Application Load Balancer] to load balance our
-service. ALB's cannot be provisioned by creating a [Kubernetes Service].
-Instead, we have to use the concept of an [Ingress] resource. For the Ingress
-resource to actually be able to spin up an ALB and configure it, we must have an
-[Ingress Controller] specific to the cloud provider; in our case, this would be
-the [ALB Ingress Controller].
-
-### TODO: Installing the ALB Ingress Controller
 
 # TODO
 
