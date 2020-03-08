@@ -25,3 +25,5 @@ variable "vpc_private_subnet_ids" {
 variable "kubeconfig_path" {
   type = string
 }
+
+data "aws_region" "current" {}

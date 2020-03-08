@@ -1,4 +1,5 @@
 resource "kubernetes_deployment" "hello-dep" {
+  depends_on = [kubernetes_namespace.test]
   metadata {
     name      = "hello-dep"
     namespace = "test"
@@ -8,7 +9,7 @@ resource "kubernetes_deployment" "hello-dep" {
   }
 
   spec {
-    replicas = 3
+    replicas = 2
     selector {
       match_labels = {
         app = "hello-dep-pod"
@@ -30,7 +31,7 @@ resource "kubernetes_deployment" "hello-dep" {
 
           resources {
             limits {
-              cpu    = "0.5"
+              cpu    = "0.25"
               memory = "128Mi"
             }
           }

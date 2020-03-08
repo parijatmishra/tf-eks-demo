@@ -26,6 +26,7 @@ resource "kubernetes_service" "hello-int-nlb" {
 
 }
 resource "kubernetes_deployment" "hello-int-nlb" {
+  depends_on = [kubernetes_namespace.test]
   metadata {
     name      = "hello-int-nlb"
     namespace = "test"
@@ -35,7 +36,7 @@ resource "kubernetes_deployment" "hello-int-nlb" {
   }
 
   spec {
-    replicas = 3
+    replicas = 2
     selector {
       match_labels = {
         app = "hello-int-nlb"
@@ -59,7 +60,7 @@ resource "kubernetes_deployment" "hello-int-nlb" {
           }
           resources {
             limits {
-              cpu    = "0.5"
+              cpu    = "0.25"
               memory = "128Mi"
             }
           }

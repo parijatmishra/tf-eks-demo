@@ -19,6 +19,7 @@ services, via Terraform.
 [Classic Load Balancer]: https://docs.aws.amazon.com/elasticloadbalancing/latest/classic/introduction.html
 [Network Load Balancer]: https://docs.aws.amazon.com/elasticloadbalancing/latest/network/introduction.html
 [Application Load Balancer]: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html
+[AWS IAM OpenID Connect Provider]: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc.html
 
 # Pre-requisites
 
@@ -33,6 +34,9 @@ following the guide from:
 - The [AWS CLI](https://aws.amazon.com/cli/) installed and configured to access the account.
 - The [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/) CLI
 - The [helm](https://helm.sh/) CLI (optional; only needed for some parts)
+- (On macOS) The `tac` program, part of [GNU
+  coreutils](https://www.gnu.org/software/coreutils/), installable via Hommbrew
+  or macports for one specific script.
 
 ## Configuring the AWS region for Terraform
 
@@ -251,6 +255,51 @@ NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
 kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   10m
 ```
 
+## Explanation
+
+The Terraform configuration above:
+
+* Creates an AWS IAM Role that can be assumed by the EKS service itself, to make AWS API calls
+  * The standard, pre-created policies `AmazonEKSClusterPolicy` and
+    `AmazonEKSServicePolicy` are attached to it. This are the bare minimum
+    permissions needed by Amazon EKS as described in the documentation page
+    [Amazon EKS Service IAM
+    Role](https://docs.aws.amazon.com/eks/latest/userguide/service_IAM_role.html).
+  * Creates a custom policy that we have named
+    `{cluster_name}-EksAdditionalPermission` and attaches it to the role; it
+    contains some permissions that will be needed by functionality we will
+    enable later below. We have discovered these permissions by reading through
+    the EKS documentation. If you are just starting out, and want to give as
+    little permissions as possible to EKS, then keep the permissions in this
+    policy limited to `cloudwatch:PutMetricData`. As you go through the sections
+    below, read the corresponding Amazon EKS documentation to discover what
+    additional permissions are required, and add them to this policy if you need
+    that features.
+* Creates an CloudWatch Log Group to which EKS will send its logs. The name of
+  the log group is dictated by Amazon EKS: it will always be
+  `/aws/eks/${cluster_name}/cluster`. Amazon EKS will create the log group if it
+  does not exist. We choose to create it here because we want to explicitly
+  specify the retention period for logs. If Amazon EKS created the log group
+  itself, it would not set a retention period.
+* Creates the Amazon EKS control plane a.k.a. "cluster". This refers to the VPC
+  and IAM Role we created earlier.
+* Creates an [AWS IAM OpenID Connect Provider] that federates to the EKS
+  Cluster's OpenID Issuer. See
+  https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts-technical-overview.html
+
+  We will use this capability later when we link [Kubernetes Service Account]'s
+  to AWS IAM Roles.
+
+  To link the Provider to the Issuer, we need a "thumbprint" of the Isseur's TLS
+  certificate. It is not possible to obtain this from the Kubernetes or AWS APIs
+  or tools. We have to use external tools. We have used a shell script and
+  called it from Terraform using an "external" data provider to get the
+  thumbprint. The script is based on
+  https://medium.com/@marcincuber/amazon-eks-with-oidc-provider-iam-roles-for-kubernetes-services-accounts-59015d15cb0c.
+
+  *On macOS, you may need to install GNU coreutils via brew or macports to get
+  the `tac` program, which the script needs.*
+
 ## NodeGroup IAM role
 
 We will create "worker nodes" or node groups below. Worker nodes are just EC2
@@ -345,7 +394,7 @@ metadata:
 ```
 
 > **Note**: Why do we not create this config map when we created the node group
-> above, in a single step? Because the `aws-auth` config map is used for more
+> below, in a single step? Because the `aws-auth` config map is used for more
 > than the worker node IAM roles; it is the central location for *all* IAM
 > integration with Kubernetes RBAC. We need to separate it out because you will
 > use this for other IAM entities as well. See
@@ -761,12 +810,14 @@ One of the things special about this controller is that it needs to make calls
 to AWS APIs to create and configure ALBs on your behalf and therefore needs AWS
 IAM credentials. On Amazon EKS the best practice is to create a [Kubernetes
 Service Account] for this controller and use an [IAM Role for Service Account]
-with it. For IAM integration with Kubernetes to work, the cluster must have an
-OpenID Connect (OIDC) Issuer URL. This should already be enabled for clusters
-created with Kubernetes version 1.14 and higher.
+with it. For IAM integration with Kubernetes to work, there must be an [AWS IAM
+OpenID Connect Provider] resource that refers to its OpenID Connect Issuer URL.
+When we created our EKS Control Plane earlier, we also created the AWS IAM
+OpenID Connect Provider in file
+`03-controlplane/05-controlplane-oidc-provider.tf`.
 
-See the [IAM Role for Service Account] documentation on how to test for this and
-enable it if necessary.  This cannot be done easily via Terraform.
+If you created your cluster some other way, see the [IAM Role for Service
+Account] documentation on how to test for this and enable it if necessary.
 
 ### Installing the ALB Ingress Controller
 
@@ -843,12 +894,14 @@ https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/master/docs/e
   controller creates resources, it uses the cluster name as part of their name,
   providing distinction between resources between different clusters.
 
-# Managing K8S objects via Terraform
+# Managing Kubernetes objects via Terraform
+
+**All files mentioned below are in the folder: `10-tf-eks-test`.**
 
 Most people use `kubectl` and Kubernetes YAML files to declaratively manage
 their clusters. However, we'd like to use a single system - Terraform - to
-manage our environment as much as possible. The
-[Terraform Kubernetes Provider][tf-k8s] can help.
+manage our environment as much as possible. The [Terraform Kubernetes
+Provider][tf-k8s] can help.
 
 To try this, go into the `10-tf-k8s-test` folder, edit the
 `variables.auto.tfvars` file with appropriate values (the names are
@@ -1254,12 +1307,63 @@ By removing the annotation
 `service.beta.kubernetes.io/aws-load-balancer-internal` we can make our load
 balancer external. We will leave this out.
 
-## TODO: Terraform: Kubernetes Service - NodePort - External ALB
+## Terraform: Kubernetes Service - External ALB
 
+Instead of an NLB, we can use an [Application Load Balancer]. In this section,
+we will deploy the [2048 game](https://play2048.co/). The game program is
+conveniently available as a [Docker
+container](https://hub.docker.com/r/alexwhen/docker-2048).
+
+The file `06-service-ext-alb.tf` sets it up. It:
+* Creates a Kubernetes Deployment that runs 2 replicas of a pod; the pod runs
+  one container using the game Docker image mentioned above.
+* Creates a [NodePort Service] attached to the Deployment. This service
+  allocates a port on every node for the service on the node's IP. Since the
+  node's IP is private to the VPC, now we can access the service from within the
+  VPC by connecting to it at the allocated port, but not from outside the VPC.
+* Creates an [Ingress] resource, using annotations to specify that it should be
+  an internet facing AWS ALB, and configures it to route the path "/*" to the
+  service.
+
+To deploy, in the folder `10-tf-eks-test`, run:
+
+```bash
+terrform init # only needed once
+terraform deploy
+```
+
+
+It takes a few minutes for the ALB to come up. You can run the following command to see what the ALB Ingress Controller is doing:
+
+```bash
+kubectl logs -n kube-system   deployment.apps/alb-ingress-controller  | grep 'test/game2048-ext-alb'
+```
+
+Output:
+```
+...
+I0307 14:44:24.130891       1 loadbalancer.go:194] test/game2048-ext-alb: creating LoadBalancer 42753d32-test-game2048exta-5c7b
+I0307 14:44:24.757652       1 loadbalancer.go:211] test/game2048-ext-alb: LoadBalancer 42753d32-test-game2048exta-5c7b created, ARN: arn:aws:elasticloadbalancing:us-east-1:838522581324:loadbalancer/app/42753d32-test-game2048exta-5c7b/01cafd6431ed2acb
+...
+```
+
+To check if the ALB is up and running, run the command:
+
+```bash
+kubectl get ingress/game2048-ext-alb -n test -o wide
+```
+
+Output:
+```
+NAME               HOSTS   ADDRESS                                                                  PORTS   AGE
+game2048-ext-alb   *       42753d32-test-game2048exta-5c7b-1285349486.us-east-1.elb.amazonaws.com   80      11h
+```
+
+You can take the ALB domain name under the "ADDRESS" column, and use it as URL
+in the browser. You should be able to see the game UI.
 
 # TODO
-
-- HTTPS - certs with NLB
+- HTTPS - certs with NLB/ALB
 - Multiple Kubernetes services with NGINX ingress controller behind NLB
 - HTTPS services: ALB ingress controller
 - HTTPS services: NGINX ingress controller

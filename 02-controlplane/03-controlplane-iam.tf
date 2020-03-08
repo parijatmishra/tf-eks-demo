@@ -32,8 +32,8 @@ resource "aws_iam_role_policy_attachment" "EksControlPlane-AmazonEKSServicePolic
   role       = aws_iam_role.EksControlPlane.name
 }
 
-resource "aws_iam_role_policy" "EksCloudWatchMetricsPolicy" {
-  name = "EksCloudWatchMetricsPolicy"
+resource "aws_iam_role_policy" "EksAdditionalPermissions" {
+  name = "${var.cluster_name}-EksAdditionalPermissions"
   role = aws_iam_role.EksControlPlane.name
 
   policy = <<EOF

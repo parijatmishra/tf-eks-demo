@@ -35,7 +35,7 @@ resource "aws_eks_cluster" "EksControlPlane" {
     aws_cloudwatch_log_group.EksControlPlane,
     aws_iam_role_policy_attachment.EksControlPlane-AmazonEKSClusterPolicy,
     aws_iam_role_policy_attachment.EksControlPlane-AmazonEKSServicePolicy,
-    aws_iam_role_policy.EksCloudWatchMetricsPolicy
+    aws_iam_role_policy.EksAdditionalPermissions
   ]
 
   tags = merge({
@@ -46,4 +46,3 @@ resource "aws_eks_cluster" "EksControlPlane" {
     command = "aws eks update-kubeconfig --name ${var.cluster_name} --kubeconfig ${var.kubeconfig_path}"
   }
 }
-

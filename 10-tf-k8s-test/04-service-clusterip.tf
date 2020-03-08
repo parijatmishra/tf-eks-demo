@@ -23,6 +23,7 @@ resource "kubernetes_service" "hello-svc" {
 
 }
 resource "kubernetes_deployment" "hello-svc" {
+  depends_on = [kubernetes_namespace.test]
   metadata {
     name      = "hello-svc"
     namespace = "test"
@@ -32,7 +33,7 @@ resource "kubernetes_deployment" "hello-svc" {
   }
 
   spec {
-    replicas = 3
+    replicas = 2
     selector {
       match_labels = {
         app = "hello-svc"
@@ -56,7 +57,7 @@ resource "kubernetes_deployment" "hello-svc" {
           }
           resources {
             limits {
-              cpu    = "0.5"
+              cpu    = "0.25"
               memory = "128Mi"
             }
           }
