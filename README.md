@@ -283,22 +283,21 @@ The Terraform configuration above:
   itself, it would not set a retention period.
 * Creates the Amazon EKS control plane a.k.a. "cluster". This refers to the VPC
   and IAM Role we created earlier.
-* Creates an [AWS IAM OpenID Connect Provider] that federates to the EKS
-  Cluster's OpenID Issuer. See
-  https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts-technical-overview.html
+* Creates an [AWS IAM OpenID Connect (OIDC) Provider] that federates to the [EKS
+  Cluster's OIDC Provider](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts-technical-overview.html).
 
   We will use this capability later when we link [Kubernetes Service Account]'s
   to AWS IAM Roles.
 
-  To link the Provider to the Issuer, we need a "thumbprint" of the Isseur's TLS
-  certificate. It is not possible to obtain this from the Kubernetes or AWS APIs
-  or tools. We have to use external tools. We have used a shell script and
-  called it from Terraform using an "external" data provider to get the
-  thumbprint. The script is based on
+  To link the IAM OICD Connect Provider to the Amazon EKS Cluster's OIDC Provider, we need to supply two pieces of information to the Provider:
+  * the URL of the EKS Provider: this is available from the Amazon EKS API; the Terraform "aws_eks_cluster" resource has a property named `.identity.0.oidc.0.issuer` that returns this URL. (In the Amazon EKS console, it is displayed in the cluster's general configuration section as the field "OpenID Connect provider URL".)
+  *  a "thumbprint" of the root CA that signed the certificate used by the Kubernetes OIDC Issuer's TLS certificate. The Kubernetes OIDC provider is unique for each EKS Cluster, but it's keys are signed by a per-region common CA. The CA's URL is `oidc.eks.<region>.amazonaws.com`, where `<region>` is the AWS region code (e.g. `us-east-1`) where the cluster exists. If we were creating the IAM OIDC Provider using the IAM console, the console attempts to fetch the thumbprint automatically. However, since we are using Terraform, we must get the thumbprint programmatically ourselves. The process is described in the IAM documentation at [Obtaining the Root CA Thumbprint for an OpenID Connect Identity Provider](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc_verify-thumbprint.html).
+
+  We have used a shell script and called it from Terraform using an "external"
+  data provider to get the thumbprint. The script is based on
   https://medium.com/@marcincuber/amazon-eks-with-oidc-provider-iam-roles-for-kubernetes-services-accounts-59015d15cb0c.
 
-  *On macOS, you may need to install GNU coreutils via brew or macports to get
-  the `tac` program, which the script needs.*
+  *This script need the following command line tools: (a) the OpenSSL CLI `openssl`; the `sed` program; the `awk` program; and the `tac` program. On most linux distrobutions and on mac OS, `openssl`, `sed` and `awk` are pre-installed. To get `tac`, you may need to install the GNU `coreutils` package. On macOS, this is available in Homebrew or Macports.*
 
 ## NodeGroup IAM role
 
@@ -729,7 +728,7 @@ If you read the chart documentation, you will see a large number of
 configuration variables that can be tweaked. For our demo purposes, we need to
 take of only two.
 
-## Deploying Prometheus using Helm
+### Deploying Prometheus using Helm
 
 First, create a dedicated namespace for Prometheus resources:
 
@@ -804,20 +803,20 @@ of an Kubernetes [Ingress] resource. For the Ingress resource to actually be
 able to spin up an ALB and configure it, we must have an [Ingress Controller]
 specific to AWS ALBs; in our case, this would be the [ALB Ingress Controller].
 
-### AWS IAM Integration with Kubernetes
+### Giving the ALB Ingress Controller AWS IAM Permissions
 
 One of the things special about this controller is that it needs to make calls
 to AWS APIs to create and configure ALBs on your behalf and therefore needs AWS
-IAM credentials. On Amazon EKS the best practice is to create a [Kubernetes
-Service Account] for this controller and use an [IAM Role for Service Account]
-with it. For IAM integration with Kubernetes to work, there must be an [AWS IAM
-OpenID Connect Provider] resource that refers to its OpenID Connect Issuer URL.
-When we created our EKS Control Plane earlier, we also created the AWS IAM
-OpenID Connect Provider in file
-`03-controlplane/05-controlplane-oidc-provider.tf`.
+IAM credentials. There are two parts to this.
 
-If you created your cluster some other way, see the [IAM Role for Service
-Account] documentation on how to test for this and enable it if necessary.
+* In AWS IAM role that *trusts* a particular Kubernetes namespace and Service
+  Account from a particular OIDC Provider. We created the OIDC Provider earlier.
+  We just have to know the ALB ingress controller's namespace and Service
+  Account name beforehand and specify that in the IAM Role's trust policy. We
+  have to give permissions to the IAM role to call the AWS APIs that ALB ingress
+  controller needs.
+* In Kubernetes, we have to create a Service Account and map it to the AWS IAM
+  role, using the annotation `eks.amazonaws.com/role-arn`.
 
 ### Installing the ALB Ingress Controller
 
@@ -864,16 +863,17 @@ The file `03-alb-ingress-controller-rbac.tf`:
     Amazon EKS associate the Service Account with the IAM role created above.
     This is described at:
     https://docs.aws.amazon.com/eks/latest/userguide/specify-service-account-role.html
-  * Creates a Kubernetes ClusterRole and gives it some permission to Kubernetes
+  * Creates a Kubernetes ClusterRole and gives it some permissions to Kubernetes
     APIs
   * Binds the Service Account to the ClusterRole via a ClusterRoleBinding
 
 ### The ALB Ingress Controller - Deployment
 
 The file `04-alb-ingress-controller-deployment.tf` deploys the actual controller
-as Deployment. It is a straightforward transalation into Terraform of the
-Kubernetes manifest at
-https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/master/docs/examples/alb-ingress-controller.yaml. We have made a couple of customizations:
+as a Kubernetes Deployment. It is a straightforward transalation into Terraform
+of the Kubernetes manifest at
+https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/master/docs/examples/alb-ingress-controller.yaml.
+We have made a couple of customizations:
 
 * We have specified an explicit dependency on the Service Account Resource, so
   that we don't create the deployment before the service account has been
@@ -892,7 +892,7 @@ https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/master/docs/e
   two ALBs created.
 * We have specified the "--cluster-name" argument, so that when this ingress
   controller creates resources, it uses the cluster name as part of their name,
-  providing distinction between resources between different clusters.
+  providing distinction between ALB resources between different clusters.
 
 # Managing Kubernetes objects via Terraform
 
